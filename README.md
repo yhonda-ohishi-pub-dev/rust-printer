@@ -127,9 +127,17 @@ cd rust-app
 cargo run
 ```
 
-## リリース（ghcr.io）
+## CI/CD & デプロイ
 
-### 初回セットアップ
+### フロー
+
+```
+git push
+  ↓ [pre-push hook] Docker build → ghcr.io push
+  ↓ [GitHub Actions] sync files → docker pull → docker-compose up → health check
+```
+
+### 開発者セットアップ
 
 ```bash
 # GitHub Container Registryにログイン
@@ -143,11 +151,38 @@ cp scripts/pre-push .git/hooks/pre-push
 
 1. `VERSION`ファイルのバージョンを更新
 2. `git push` を実行（pre-pushフックが自動でビルド・プッシュ）
+3. GitHub Actions が本番サーバーで自動デプロイ
+
+### 自動同期されるファイル
+
+CI/CD が `/opt/rust-printer/` に以下を自動コピー:
+- `docker-compose.prod.yml`
+- `fonts/NotoSansJP-Regular.ttf`
+
+### 本番サーバー（ohishi-data）初回セットアップ
+
+```bash
+# ディレクトリ作成と.env設定のみ
+sudo mkdir -p /opt/rust-printer
+echo "PRINTER_IP=192.168.x.x" > /opt/rust-printer/.env
+```
+
+### 本番起動（手動）
+
+```bash
+cd /opt/rust-printer
+docker-compose -f docker-compose.prod.yml up -d
+```
 
 ### イメージ
 
 - `ghcr.io/yhonda-ohishi-pub-dev/rust-pdf-printer`
 - `ghcr.io/yhonda-ohishi-pub-dev/cups-sidecar`
+
+### ネットワーク
+
+本番環境は `nginx_default` ネットワークに接続されます。
+php3 からは `http://rust-pdf-printer:8081` でアクセス可能。
 
 ## 技術スタック
 

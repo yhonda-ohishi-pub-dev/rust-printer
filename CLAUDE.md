@@ -53,8 +53,17 @@ rust-printer/
 │
 ├── print_pdf_reference/         # 参照用Goプロジェクト（旧実装）
 │
-├── docker-compose.yml           # Docker Compose設定
+├── .github/
+│   └── workflows/
+│       └── deploy.yml           # CI/CD デプロイワークフロー
+│
+├── fonts/
+│   └── NotoSansJP-Regular.ttf   # 日本語フォント
+│
+├── docker-compose.yml           # Docker Compose設定（開発用）
+├── docker-compose.prod.yml      # Docker Compose設定（本番用・ghcr.io）
 ├── .env.example                 # 環境変数サンプル
+├── VERSION                      # バージョンファイル
 ├── README.md                    # プロジェクトドキュメント
 └── CLAUDE.md                    # このファイル
 ```
@@ -90,10 +99,48 @@ cd rust-app && cargo build
 # Rustアプリのテスト
 cd rust-app && cargo test
 
-# Docker Composeで起動
+# Docker Composeで起動（開発用）
 docker-compose up --build
 
 # 個別コンテナのビルド
 docker build -t rust-pdf-printer ./rust-app
 docker build -t cups-sidecar ./cups-sidecar
 ```
+
+## CI/CD & Deployment
+
+### フロー
+
+```
+git push
+  ↓ [pre-push hook]
+  │ Docker build → ghcr.io push
+  ↓ [GitHub Actions - ohishi-data runner]
+  │ checkout → sync files → docker pull → docker-compose up → health check
+```
+
+### 自動同期されるファイル
+
+CI/CD が `/opt/rust-printer/` に以下を自動コピー:
+- `docker-compose.prod.yml`
+- `fonts/NotoSansJP-Regular.ttf`
+
+### 本番サーバー（ohishi-data）初回セットアップ
+
+```bash
+# ディレクトリ作成と.env設定のみ
+sudo mkdir -p /opt/rust-printer
+echo "PRINTER_IP=192.168.x.x" > /opt/rust-printer/.env
+```
+
+### 本番起動（手動）
+
+```bash
+cd /opt/rust-printer
+docker-compose -f docker-compose.prod.yml up -d
+```
+
+### ネットワーク
+
+- 本番環境は `nginx_default` ネットワークに接続
+- php3 からは `http://rust-pdf-printer:8081` でアクセス可能

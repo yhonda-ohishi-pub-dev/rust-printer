@@ -11,8 +11,7 @@ Cargo.lock
 # Environment
 .env
 
-# Fonts (large binary files)
-fonts/*.ttf
+# Fonts (large binary files) - NotoSansJP-Regular.ttf is tracked
 fonts/*.otf
 
 # Docker

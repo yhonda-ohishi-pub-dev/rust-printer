@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  rust-app:
+    image: ghcr.io/yhonda-ohishi-pub-dev/rust-pdf-printer:latest
+    container_name: rust-pdf-printer
+    ports:
+      - "8081:8081"
+    environment:
+      - RUST_LOG=info
+      - CUPS_SERVER=cups-sidecar
+      - CUPS_PORT=631
+      - DEFAULT_PRINTER=Canon_LBP221
+      - LISTEN_ADDR=0.0.0.0:8081
+      - FONT_PATH=/app/fonts/NotoSansJP-Regular.ttf
+    volumes:
+      - ./fonts:/app/fonts:ro
+    depends_on:
+      cups-sidecar:
+        condition: service_started
+    networks:
+      - nginx_default
+      - printer-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  cups-sidecar:
+    image: ghcr.io/yhonda-ohishi-pub-dev/cups-sidecar:latest
+    container_name: cups-sidecar
+    ports:
+      - "631:631"
+    environment:
+      - PRINTER_NAME=Canon_LBP221
+      - PRINTER_URI=socket://${PRINTER_IP:-192.168.1.100}:9100
+      - PRINTER_DRIVER=CNRCUPSLBP221ZK.ppd
+    volumes:
+      - cups-data:/etc/cups
+      - cups-spool:/var/spool/cups
+    networks:
+      - printer-network
+    restart: unless-stopped
+
+networks:
+  nginx_default:
+    external: true
+  printer-network:
+    driver: bridge
+
+volumes:
+  cups-data:
+    driver: local
+  cups-spool:
+    driver: local

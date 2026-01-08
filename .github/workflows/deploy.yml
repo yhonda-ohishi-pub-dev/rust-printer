@@ -1,0 +1,42 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, X64, Linux, ohishi-data]
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Sync files to /opt/rust-printer
+      run: |
+        sudo mkdir -p /opt/rust-printer/fonts
+        sudo cp docker-compose.prod.yml /opt/rust-printer/
+        sudo cp fonts/NotoSansJP-Regular.ttf /opt/rust-printer/fonts/
+        sudo chown -R $(whoami):$(whoami) /opt/rust-printer
+
+    - name: Login to ghcr.io
+      run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+    - name: Pull latest images
+      run: |
+        docker pull ghcr.io/yhonda-ohishi-pub-dev/rust-pdf-printer:latest
+        docker pull ghcr.io/yhonda-ohishi-pub-dev/cups-sidecar:latest
+
+    - name: Restart containers
+      run: |
+        cd /opt/rust-printer
+        docker-compose -f docker-compose.prod.yml down || true
+        docker-compose -f docker-compose.prod.yml up -d
+
+    - name: Health check
+      run: |
+        echo "Waiting for service to start..."
+        sleep 10
+        curl -f http://localhost:8081/health || exit 1
+        echo "Service is healthy!"
