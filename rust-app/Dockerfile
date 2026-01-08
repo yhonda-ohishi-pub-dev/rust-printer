@@ -1,5 +1,7 @@
-# Stage 1: Build
-FROM rust:1.75-bookworm AS builder
+# Stage 1: Build (static linking with musl)
+FROM rust:1.88-alpine AS builder
+
+RUN apk add --no-cache musl-dev openssl-dev openssl-libs-static pkgconfig
 
 WORKDIR /app
 
@@ -20,16 +22,13 @@ COPY src ./src
 # Build the application
 RUN cargo build --release
 
-# Stage 2: Runtime (distroless)
-FROM gcr.io/distroless/cc-debian12
+# Stage 2: Runtime (scratch)
+FROM scratch
 
 WORKDIR /app
 
 # Copy binary from builder
 COPY --from=builder /app/target/release/rust-pdf-printer /app/rust-pdf-printer
-
-# Copy fonts directory (will be mounted or added at build time)
-# Font files should be added via docker-compose volumes or build args
 
 # Set environment variables
 ENV RUST_LOG=info
