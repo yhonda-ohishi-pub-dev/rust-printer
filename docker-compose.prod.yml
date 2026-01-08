@@ -34,7 +34,7 @@ services:
       - "631:631"
     environment:
       - PRINTER_NAME=Canon_LBP221
-      - PRINTER_URI=socket://${PRINTER_IP:-192.168.1.100}:9100
+      - PRINTER_URI=socket://${PRINTER_IP}:9100
       - PRINTER_DRIVER=CNRCUPSLBP221ZK.ppd
     volumes:
       - cups-data:/etc/cups
