@@ -43,12 +43,12 @@ docker-compose up --build
 
 ## API
 
-### POST /api/print
+### POST /generate-pdf
 
-出張旅費精算書を印刷します。
+出張旅費精算書のPDFを生成して返します（印刷なし）。
 
 ```bash
-curl -X POST http://localhost:3000/api/print \
+curl -X POST http://localhost:3000/generate-pdf \
   -H "Content-Type: application/json" \
   -d '{
     "items": [{
@@ -62,7 +62,53 @@ curl -X POST http://localhost:3000/api/print \
       "pay_day": "2026-01-15",
       "ryohi": []
     }]
+  }' --output output.pdf
+```
+
+### POST /print-pdf
+
+出張旅費精算書のPDFを生成して印刷します。
+
+```bash
+curl -X POST http://localhost:3000/print-pdf \
+  -H "Content-Type: application/json" \
+  -d '{
+    "items": [{
+      "name": "山田太郎",
+      "car": "あ1234",
+      "price": 15000,
+      "start_date": "2026-01-08",
+      "end_date": "2026-01-08",
+      "purpose": "出張",
+      "office": "本社",
+      "pay_day": "2026-01-15",
+      "ryohi": []
+    }],
+    "print": true,
+    "printerName": "LBP221"
   }'
+```
+
+### POST /print
+
+既存のPDFファイルを印刷します（封筒印刷など）。
+
+```bash
+curl -X POST http://localhost:3000/print \
+  -F "document=@/path/to/envelope.pdf" \
+  -F "printer=LBP221-futo"
+```
+
+**レスポンス例:**
+```json
+{
+  "status": "success",
+  "message": "PDF printed successfully",
+  "filename": "envelope.pdf",
+  "printer": "LBP221-futo",
+  "printed": true,
+  "file_size": 12345
+}
 ```
 
 ## 開発
