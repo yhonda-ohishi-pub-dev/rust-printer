@@ -162,8 +162,11 @@ CI/CD が `/opt/rust-printer/` に以下を自動コピー:
 ### 本番サーバー（ohishi-data）初回セットアップ
 
 ```bash
-# ディレクトリ作成と.env設定のみ
-sudo mkdir -p /opt/rust-printer
+# ディレクトリ作成（runner ユーザーで書き込み可能にする）
+sudo mkdir -p /opt/rust-printer/fonts
+sudo chown -R $(whoami):$(whoami) /opt/rust-printer
+
+# プリンタIP設定
 echo "PRINTER_IP=192.168.x.x" > /opt/rust-printer/.env
 ```
 
