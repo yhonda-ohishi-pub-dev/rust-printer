@@ -24,7 +24,7 @@ jobs:
         cp fonts/NotoSansJP-Regular.ttf /opt/rust-printer/fonts/
 
     - name: Login to ghcr.io
-      run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+      run: echo "${{ secrets.CR_PAT }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
     - name: Pull latest images
       run: |
