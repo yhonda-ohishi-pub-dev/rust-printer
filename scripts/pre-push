@@ -1,0 +1,55 @@
+#!/bin/bash
+# pre-push hook: Build and push Docker images to ghcr.io
+# Install: cp scripts/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+
+set -e
+
+# Configuration
+REGISTRY="ghcr.io"
+OWNER="yhonda-ohishi-pub-dev"
+VERSION=$(cat VERSION)
+
+# Image names
+RUST_APP_IMAGE="${REGISTRY}/${OWNER}/rust-pdf-printer"
+CUPS_SIDECAR_IMAGE="${REGISTRY}/${OWNER}/cups-sidecar"
+
+echo "========================================"
+echo "Building and pushing to ${REGISTRY}"
+echo "Version: ${VERSION}"
+echo "========================================"
+
+# Check if logged in to ghcr.io
+if ! grep -q "${REGISTRY}" ~/.docker/config.json 2>/dev/null; then
+    echo "Error: Not logged in to ${REGISTRY}"
+    echo "Run: echo \$GITHUB_TOKEN | docker login ${REGISTRY} -u USERNAME --password-stdin"
+    exit 1
+fi
+
+# Build rust-app
+echo ""
+echo "[1/4] Building rust-pdf-printer..."
+docker build -t ${RUST_APP_IMAGE}:${VERSION} -t ${RUST_APP_IMAGE}:latest ./rust-app
+
+# Build cups-sidecar
+echo ""
+echo "[2/4] Building cups-sidecar..."
+docker build -t ${CUPS_SIDECAR_IMAGE}:${VERSION} -t ${CUPS_SIDECAR_IMAGE}:latest ./cups-sidecar
+
+# Push rust-app
+echo ""
+echo "[3/4] Pushing rust-pdf-printer..."
+docker push ${RUST_APP_IMAGE}:${VERSION}
+docker push ${RUST_APP_IMAGE}:latest
+
+# Push cups-sidecar
+echo ""
+echo "[4/4] Pushing cups-sidecar..."
+docker push ${CUPS_SIDECAR_IMAGE}:${VERSION}
+docker push ${CUPS_SIDECAR_IMAGE}:latest
+
+echo ""
+echo "========================================"
+echo "Successfully pushed:"
+echo "  - ${RUST_APP_IMAGE}:${VERSION}"
+echo "  - ${CUPS_SIDECAR_IMAGE}:${VERSION}"
+echo "========================================"

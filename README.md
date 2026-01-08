@@ -127,6 +127,28 @@ cd rust-app
 cargo run
 ```
 
+## リリース（ghcr.io）
+
+### 初回セットアップ
+
+```bash
+# GitHub Container Registryにログイン
+echo $GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
+
+# pre-pushフックをインストール
+cp scripts/pre-push .git/hooks/pre-push
+```
+
+### リリース手順
+
+1. `VERSION`ファイルのバージョンを更新
+2. `git push` を実行（pre-pushフックが自動でビルド・プッシュ）
+
+### イメージ
+
+- `ghcr.io/yhonda-ohishi-pub-dev/rust-pdf-printer`
+- `ghcr.io/yhonda-ohishi-pub-dev/cups-sidecar`
+
 ## 技術スタック
 
 - **Rust**: Axum (HTTP), printpdf (PDF生成), ipp (印刷プロトコル)
