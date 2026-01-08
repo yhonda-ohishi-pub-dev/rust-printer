@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   rust-app:
     image: ghcr.io/yhonda-ohishi-pub-dev/rust-pdf-printer:latest
