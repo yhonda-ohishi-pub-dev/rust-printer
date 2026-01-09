@@ -90,16 +90,39 @@ pub async fn print_pdf(
             )
         })?;
 
-    // If print is requested, send to CUPS
+    // If print is requested, send to printer
     if request.print {
-        let printer_name = request
-            .printer_name
-            .as_deref()
-            .unwrap_or(&state.default_printer);
+        // Determine print mode
+        let mode = if request.use_direct_ipp {
+            // Direct IPP mode
+            let printer_ip = request.printer_ip.as_ref().ok_or_else(|| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiResponse::error("printer_ip is required when use_direct_ipp is true")),
+                )
+            })?;
+
+            crate::print::PrintMode::DirectIpp {
+                printer_ip: printer_ip.clone(),
+                ipp_path: "/ipp/print".to_string(),
+                paper_size: request.paper_size.clone(),
+                color_mode: request.color_mode.clone(),
+            }
+        } else {
+            // CUPS mode (default)
+            let printer_name = request
+                .printer_name
+                .as_deref()
+                .unwrap_or(&state.default_printer);
+
+            crate::print::PrintMode::Cups {
+                printer_name: printer_name.to_string(),
+            }
+        };
 
         state
-            .cups_printer
-            .print(pdf_data, "travel-expense-report", printer_name)
+            .ipp_printer
+            .print_with_mode(pdf_data, "travel-expense-report", mode.clone())
             .await
             .map_err(|e| {
                 tracing::error!("Print failed: {}", e);
@@ -109,11 +132,18 @@ pub async fn print_pdf(
                 )
             })?;
 
+        let printer_info = match mode {
+            crate::print::PrintMode::Cups { printer_name } => printer_name,
+            crate::print::PrintMode::DirectIpp { printer_ip, .. } => {
+                format!("{} (Direct IPP)", printer_ip)
+            }
+        };
+
         Ok(Json(
             ApiResponse::success("PDF generated and printed successfully")
                 .with_items(items_count)
                 .with_printed(true)
-                .with_printer(printer_name.to_string()),
+                .with_printer(printer_info),
         ))
     } else {
         Ok(Json(
@@ -132,6 +162,10 @@ pub async fn print_file(
     let mut pdf_data: Option<Vec<u8>> = None;
     let mut filename: Option<String> = None;
     let mut printer_name: Option<String> = None;
+    let mut printer_ip: Option<String> = None;
+    let mut use_direct_ipp: bool = false;
+    let mut paper_size: Option<String> = None;
+    let mut color_mode: Option<String> = None;
 
     // Parse multipart form
     while let Ok(Some(field)) = multipart.next_field().await {
@@ -151,6 +185,32 @@ pub async fn print_file(
                     }
                 }
             }
+            "printerIp" | "printer_ip" => {
+                if let Ok(value) = field.text().await {
+                    if !value.is_empty() {
+                        printer_ip = Some(value);
+                    }
+                }
+            }
+            "useDirectIpp" | "use_direct_ipp" => {
+                if let Ok(value) = field.text().await {
+                    use_direct_ipp = value.parse().unwrap_or(false);
+                }
+            }
+            "paperSize" | "paper_size" => {
+                if let Ok(value) = field.text().await {
+                    if !value.is_empty() {
+                        paper_size = Some(value);
+                    }
+                }
+            }
+            "colorMode" | "color_mode" => {
+                if let Ok(value) = field.text().await {
+                    if !value.is_empty() {
+                        color_mode = Some(value);
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -164,14 +224,38 @@ pub async fn print_file(
 
     let file_size = pdf_data.len();
     let filename = filename.unwrap_or_else(|| "document.pdf".to_string());
-    let printer = printer_name
-        .as_deref()
-        .unwrap_or(&state.default_printer);
 
-    // Send to CUPS
+    // Determine print mode
+    let mode = if use_direct_ipp {
+        let printer_ip = printer_ip.ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiResponse::error(
+                    "printer_ip is required when use_direct_ipp is true",
+                )),
+            )
+        })?;
+
+        crate::print::PrintMode::DirectIpp {
+            printer_ip,
+            ipp_path: "/ipp/print".to_string(),
+            paper_size,
+            color_mode,
+        }
+    } else {
+        let printer = printer_name
+            .as_deref()
+            .unwrap_or(&state.default_printer);
+
+        crate::print::PrintMode::Cups {
+            printer_name: printer.to_string(),
+        }
+    };
+
+    // Send to printer
     state
-        .cups_printer
-        .print(pdf_data, &filename, printer)
+        .ipp_printer
+        .print_with_mode(pdf_data, &filename, mode.clone())
         .await
         .map_err(|e| {
             tracing::error!("Print failed: {}", e);
@@ -181,11 +265,18 @@ pub async fn print_file(
             )
         })?;
 
+    let printer_info = match mode {
+        crate::print::PrintMode::Cups { printer_name } => printer_name,
+        crate::print::PrintMode::DirectIpp { printer_ip, .. } => {
+            format!("{} (Direct IPP)", printer_ip)
+        }
+    };
+
     Ok(Json(
         ApiResponse::success("PDF printed successfully")
             .with_printed(true)
             .with_filename(filename)
-            .with_printer(printer.to_string())
+            .with_printer(printer_info)
             .with_file_size(file_size),
     ))
 }

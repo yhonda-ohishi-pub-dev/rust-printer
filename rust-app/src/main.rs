@@ -10,12 +10,12 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use api::create_router;
 use pdf::PdfGenerator;
-use print::CupsPrinter;
+use print::IppPrinter;
 
 /// Application state shared across handlers
 pub struct AppState {
     pub pdf_generator: PdfGenerator,
-    pub cups_printer: CupsPrinter,
+    pub ipp_printer: IppPrinter,
     pub default_printer: String,
 }
 
@@ -60,13 +60,13 @@ async fn main() -> Result<()> {
     // Create PDF generator
     let pdf_generator = PdfGenerator::new(font_bytes)?;
 
-    // Create CUPS printer client
-    let cups_printer = CupsPrinter::new(&cups_server, cups_port);
+    // Create IPP printer client (supports both CUPS and Direct IPP)
+    let ipp_printer = IppPrinter::new(&cups_server, cups_port);
 
     // Create app state
     let state = Arc::new(AppState {
         pdf_generator,
-        cups_printer,
+        ipp_printer,
         default_printer,
     });
 

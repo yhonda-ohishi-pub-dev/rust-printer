@@ -10,6 +10,13 @@ pub struct PrintRequest {
     #[serde(default)]
     pub print: bool,
     pub printer_name: Option<String>,
+    pub printer_ip: Option<String>,
+
+    // Direct IPP printing fields
+    #[serde(default)]
+    pub use_direct_ipp: bool,           // true = Direct IPP, false = CUPS
+    pub paper_size: Option<String>,     // "A4", "B5", "A3", "Letter", etc.
+    pub color_mode: Option<String>,     // "color", "monochrome"
 }
 
 /// API Response for PDF generation/printing
