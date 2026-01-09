@@ -22,12 +22,13 @@ COPY src ./src
 # Touch source files to force rebuild and build the application
 RUN touch src/main.rs && cargo build --release
 
-# Stage 2: Runtime (alpine for musl compatibility)
-FROM alpine:latest
-
-RUN apk add --no-cache ca-certificates wget
+# Stage 2: Runtime (scratch for minimal image)
+FROM scratch
 
 WORKDIR /app
+
+# Copy CA certificates for HTTPS
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
 # Copy binary from builder
 COPY --from=builder /app/target/release/rust-pdf-printer /app/rust-pdf-printer
