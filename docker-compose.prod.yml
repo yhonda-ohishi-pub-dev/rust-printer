@@ -1,4 +1,4 @@
-version: '3.8'
+version: '3.3'
 
 services:
   rust-app:
@@ -16,8 +16,7 @@ services:
     volumes:
       - ./fonts:/app/fonts:ro
     depends_on:
-      cups-sidecar:
-        condition: service_started
+      - cups-sidecar
     networks:
       - nginx_default
       - printer-network
