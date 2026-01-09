@@ -30,8 +30,6 @@ services:
   cups-sidecar:
     image: ghcr.io/yhonda-ohishi-pub-dev/cups-sidecar:latest
     container_name: cups-sidecar
-    ports:
-      - "631:631"
     environment:
       - PRINTER_NAME=Canon_LBP221
       - PRINTER_URI=socket://${PRINTER_IP}:9100
