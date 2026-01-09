@@ -14,16 +14,18 @@ RUN mkdir src && \
 
 # Build dependencies only (for caching)
 RUN cargo build --release && \
-    rm -rf src target/release/rust-pdf-printer*
+    rm -rf src target/release/deps/rust_pdf_printer* target/release/rust-pdf-printer*
 
 # Copy actual source
 COPY src ./src
 
-# Build the application
-RUN cargo build --release
+# Touch source files to force rebuild and build the application
+RUN touch src/main.rs && cargo build --release
 
-# Stage 2: Runtime (scratch)
-FROM scratch
+# Stage 2: Runtime (alpine for musl compatibility)
+FROM alpine:latest
+
+RUN apk add --no-cache ca-certificates wget
 
 WORKDIR /app
 

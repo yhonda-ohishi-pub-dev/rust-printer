@@ -35,8 +35,6 @@ services:
       context: ./cups-sidecar
       dockerfile: Dockerfile
     container_name: cups-sidecar
-    ports:
-      - "631:631"
     environment:
       - PRINTER_NAME=Canon_LBP221
       - PRINTER_URI=socket://${PRINTER_IP:-192.168.1.100}:9100
