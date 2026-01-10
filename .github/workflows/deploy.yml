@@ -21,7 +21,7 @@ jobs:
       run: |
         mkdir -p /opt/rust-printer/fonts
         cp docker-compose.prod.yml /opt/rust-printer/
-        cp fonts/NotoSansJP-Regular.ttf /opt/rust-printer/fonts/
+        cp fonts/ipaexg.ttf /opt/rust-printer/fonts/
 
     - name: Login to ghcr.io
       run: echo "${{ secrets.CR_PAT }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
@@ -29,7 +29,6 @@ jobs:
     - name: Pull latest images
       run: |
         docker pull ghcr.io/yhonda-ohishi-pub-dev/rust-pdf-printer:latest
-        docker pull ghcr.io/yhonda-ohishi-pub-dev/cups-sidecar:latest
 
     - name: Restart containers
       run: |
