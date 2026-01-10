@@ -16,7 +16,7 @@ use print::IppPrinter;
 pub struct AppState {
     pub pdf_generator: PdfGenerator,
     pub ipp_printer: IppPrinter,
-    pub default_printer: String,
+    pub printer_ip: String,
 }
 
 #[tokio::main]
@@ -31,23 +31,17 @@ async fn main() -> Result<()> {
         .init();
 
     // Load configuration from environment
-    let cups_server = std::env::var("CUPS_SERVER").unwrap_or_else(|_| "cups-sidecar".to_string());
-    let cups_port: u16 = std::env::var("CUPS_PORT")
-        .unwrap_or_else(|_| "631".to_string())
-        .parse()
-        .unwrap_or(631);
-    let default_printer =
-        std::env::var("DEFAULT_PRINTER").unwrap_or_else(|_| "Canon_LBP221".to_string());
+    let printer_ip = std::env::var("PRINTER_IP").unwrap_or_else(|_| "172.18.21.60".to_string());
     let listen_addr = std::env::var("LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:8081".to_string());
 
     // Load Japanese font
     let font_path =
-        std::env::var("FONT_PATH").unwrap_or_else(|_| "/app/fonts/NotoSansJP-Regular.ttf".to_string());
+        std::env::var("FONT_PATH").unwrap_or_else(|_| "/app/fonts/ipaexg.ttf".to_string());
 
     let font_bytes = std::fs::read(&font_path).unwrap_or_else(|e| {
         tracing::warn!("Failed to load font from {}: {}. Using fallback.", font_path, e);
         // Fallback: try current directory
-        std::fs::read("fonts/NotoSansJP-Regular.ttf").unwrap_or_else(|_| {
+        std::fs::read("fonts/ipaexg.ttf").unwrap_or_else(|_| {
             tracing::error!("No font file found. PDF generation will fail.");
             Vec::new()
         })
@@ -60,14 +54,14 @@ async fn main() -> Result<()> {
     // Create PDF generator
     let pdf_generator = PdfGenerator::new(font_bytes)?;
 
-    // Create IPP printer client (supports both CUPS and Direct IPP)
-    let ipp_printer = IppPrinter::new(&cups_server, cups_port);
+    // Create printer client (uses RAW TCP port 9100 by default)
+    let ipp_printer = IppPrinter::new(&printer_ip, 9100);
 
     // Create app state
     let state = Arc::new(AppState {
         pdf_generator,
         ipp_printer,
-        default_printer,
+        printer_ip: printer_ip.clone(),
     });
 
     // Create router
@@ -76,7 +70,7 @@ async fn main() -> Result<()> {
     // Start server
     let listener = tokio::net::TcpListener::bind(&listen_addr).await?;
     tracing::info!("Server listening on {}", listen_addr);
-    tracing::info!("CUPS server: {}:{}", cups_server, cups_port);
+    tracing::info!("Default printer IP: {} (RAW port 9100)", printer_ip);
 
     axum::serve(listener, app).await?;
 

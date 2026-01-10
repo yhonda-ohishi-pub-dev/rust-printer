@@ -10,51 +10,9 @@ services:
       - "8081:8081"
     environment:
       - RUST_LOG=info
-      - CUPS_SERVER=cups-sidecar
-      - CUPS_PORT=631
-      - DEFAULT_PRINTER=Canon_LBP221
+      - PRINTER_IP=${PRINTER_IP:-172.18.21.60}
       - LISTEN_ADDR=0.0.0.0:8081
-      - FONT_PATH=/app/fonts/NotoSansJP-Regular.ttf
+      - FONT_PATH=/app/fonts/ipaexg.ttf
     volumes:
       - ./fonts:/app/fonts:ro
-    depends_on:
-      cups-sidecar:
-        condition: service_started
-    networks:
-      - printer-network
     restart: unless-stopped
-    # Note: healthcheck disabled for scratch image (no shell/wget available)
-    # healthcheck:
-    #   test: ["CMD", "wget", "-q", "--spider", "http://localhost:8081/health"]
-    #   interval: 30s
-    #   timeout: 10s
-    #   retries: 3
-    #   start_period: 10s
-
-  cups-sidecar:
-    build:
-      context: ./cups-sidecar
-      dockerfile: Dockerfile
-    container_name: cups-sidecar
-    environment:
-      - PRINTER_NAME=Canon_LBP221
-      - PRINTER_URI=socket://${PRINTER_IP:-192.168.1.100}:9100
-      - PRINTER_DRIVER=CNRCUPSLBP221ZK.ppd
-    volumes:
-      - cups-data:/etc/cups
-      - cups-spool:/var/spool/cups
-    networks:
-      - printer-network
-    restart: unless-stopped
-    # Privileged mode may be needed for some printer access scenarios
-    # privileged: true
-
-networks:
-  printer-network:
-    driver: bridge
-
-volumes:
-  cups-data:
-    driver: local
-  cups-spool:
-    driver: local

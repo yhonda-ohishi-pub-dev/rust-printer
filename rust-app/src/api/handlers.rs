@@ -56,7 +56,6 @@ pub async fn generate_pdf(
             )
         })?;
 
-    // Return PDF as binary response
     Ok((
         StatusCode::OK,
         [(axum::http::header::CONTENT_TYPE, "application/pdf")],
@@ -94,34 +93,26 @@ pub async fn print_pdf(
     if request.print {
         // Determine print mode
         let mode = if request.use_direct_ipp {
-            // Direct IPP mode
-            let printer_ip = request.printer_ip.as_ref().ok_or_else(|| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    Json(ApiResponse::error("printer_ip is required when use_direct_ipp is true")),
-                )
-            })?;
-
+            // Direct IPP mode (for PX-M650F etc.)
             crate::print::PrintMode::DirectIpp {
-                printer_ip: printer_ip.clone(),
                 ipp_path: "/ipp/print".to_string(),
                 paper_size: request.paper_size.clone(),
                 color_mode: request.color_mode.clone(),
             }
         } else {
-            // CUPS mode (default)
-            let printer_name = request
-                .printer_name
-                .as_deref()
-                .unwrap_or(&state.default_printer);
-
-            crate::print::PrintMode::Cups {
-                printer_name: printer_name.to_string(),
-            }
+            // RAW mode (default, port 9100)
+            crate::print::PrintMode::Raw
         };
 
-        state
-            .ipp_printer
+        let printer_ip = request
+            .printer_ip
+            .as_deref()
+            .unwrap_or(&state.printer_ip);
+
+        // Create printer client with the target IP
+        let printer = crate::print::IppPrinter::new(printer_ip, 0);
+
+        printer
             .print_with_mode(pdf_data, "travel-expense-report", mode.clone())
             .await
             .map_err(|e| {
@@ -133,10 +124,8 @@ pub async fn print_pdf(
             })?;
 
         let printer_info = match mode {
-            crate::print::PrintMode::Cups { printer_name } => printer_name,
-            crate::print::PrintMode::DirectIpp { printer_ip, .. } => {
-                format!("{} (Direct IPP)", printer_ip)
-            }
+            crate::print::PrintMode::Raw => format!("{} (RAW)", printer_ip),
+            crate::print::PrintMode::DirectIpp { .. } => format!("{} (Direct IPP)", printer_ip),
         };
 
         Ok(Json(
@@ -161,7 +150,6 @@ pub async fn print_file(
 ) -> Result<Json<ApiResponse>, (StatusCode, Json<ApiResponse>)> {
     let mut pdf_data: Option<Vec<u8>> = None;
     let mut filename: Option<String> = None;
-    let mut printer_name: Option<String> = None;
     let mut printer_ip: Option<String> = None;
     let mut use_direct_ipp: bool = false;
     let mut paper_size: Option<String> = None;
@@ -176,13 +164,6 @@ pub async fn print_file(
                 filename = field.file_name().map(|s| s.to_string());
                 if let Ok(bytes) = field.bytes().await {
                     pdf_data = Some(bytes.to_vec());
-                }
-            }
-            "printer" => {
-                if let Ok(value) = field.text().await {
-                    if !value.is_empty() {
-                        printer_name = Some(value);
-                    }
                 }
             }
             "printerIp" | "printer_ip" => {
@@ -227,34 +208,23 @@ pub async fn print_file(
 
     // Determine print mode
     let mode = if use_direct_ipp {
-        let printer_ip = printer_ip.ok_or_else(|| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(ApiResponse::error(
-                    "printer_ip is required when use_direct_ipp is true",
-                )),
-            )
-        })?;
-
         crate::print::PrintMode::DirectIpp {
-            printer_ip,
             ipp_path: "/ipp/print".to_string(),
             paper_size,
             color_mode,
         }
     } else {
-        let printer = printer_name
-            .as_deref()
-            .unwrap_or(&state.default_printer);
-
-        crate::print::PrintMode::Cups {
-            printer_name: printer.to_string(),
-        }
+        crate::print::PrintMode::Raw
     };
 
-    // Send to printer
-    state
-        .ipp_printer
+    let printer_ip = printer_ip
+        .as_deref()
+        .unwrap_or(&state.printer_ip);
+
+    // Create printer client and send
+    let printer = crate::print::IppPrinter::new(printer_ip, 0);
+
+    printer
         .print_with_mode(pdf_data, &filename, mode.clone())
         .await
         .map_err(|e| {
@@ -266,10 +236,8 @@ pub async fn print_file(
         })?;
 
     let printer_info = match mode {
-        crate::print::PrintMode::Cups { printer_name } => printer_name,
-        crate::print::PrintMode::DirectIpp { printer_ip, .. } => {
-            format!("{} (Direct IPP)", printer_ip)
-        }
+        crate::print::PrintMode::Raw => format!("{} (RAW)", printer_ip),
+        crate::print::PrintMode::DirectIpp { .. } => format!("{} (Direct IPP)", printer_ip),
     };
 
     Ok(Json(
