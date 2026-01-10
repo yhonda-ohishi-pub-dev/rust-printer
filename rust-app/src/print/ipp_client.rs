@@ -170,9 +170,15 @@ fn map_paper_size(size: &str) -> String {
     match size.to_lowercase().as_str() {
         "a4" => "iso_a4_210x297mm".to_string(),
         "a3" => "iso_a3_297x420mm".to_string(),
+        "a5" => "iso_a5_148x210mm".to_string(),
         "b5" => "iso_b5_176x250mm".to_string(),
         "letter" => "na_letter_8.5x11in".to_string(),
         "legal" => "na_legal_8.5x14in".to_string(),
+        // Japanese envelopes
+        "naga3" | "cho3" | "長3" => "om_cho-3_120x235mm".to_string(),
+        "naga4" | "cho4" | "長4" => "om_cho-4_90x205mm".to_string(),
+        // If already in IPP format (contains underscore), use as-is
+        s if s.contains('_') => s.to_string(),
         _ => "iso_a4_210x297mm".to_string(),
     }
 }

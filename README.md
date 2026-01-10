@@ -120,13 +120,27 @@ curl -X POST http://localhost:8081/print-pdf \
 curl -X POST http://localhost:8081/print \
   -F "document=@/path/to/envelope.pdf"
 
-# Direct IPP印刷
+# Direct IPP印刷（長3封筒）
 curl -X POST http://localhost:8081/print \
   -F "document=@/path/to/envelope.pdf" \
-  -F "use_direct_ipp=true" \
-  -F "printer_ip=192.168.1.100" \
-  -F "paper_size=iso_a5_148x210mm"
+  -F "useDirectIpp=true" \
+  -F "printerIp=192.168.1.100" \
+  -F "paperSize=naga3"
 ```
+
+#### 対応用紙サイズ
+
+| 指定値 | IPP media | サイズ |
+|-------|-----------|--------|
+| `a4` | iso_a4_210x297mm | A4 |
+| `a5` | iso_a5_148x210mm | A5 |
+| `a3` | iso_a3_297x420mm | A3 |
+| `b5` | iso_b5_176x250mm | B5 |
+| `letter` | na_letter_8.5x11in | レター |
+| `naga3`, `cho3`, `長3` | om_cho-3_120x235mm | 長3封筒 |
+| `naga4`, `cho4`, `長4` | om_cho-4_90x205mm | 長4封筒 |
+
+IPP形式（`_`を含む文字列）はそのまま使用可能。
 
 **レスポンス例:**
 ```json

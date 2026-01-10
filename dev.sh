@@ -102,6 +102,19 @@ generate_pdf() {
     fi
 }
 
+show_envelope() {
+    local envelope_pdf="$PROJECT_DIR/envelope_naga3.pdf"
+
+    if [ ! -f "$envelope_pdf" ]; then
+        log_error "Envelope PDF not found: $envelope_pdf"
+        exit 1
+    fi
+
+    log_info "Envelope PDF (Naga-3: 120mm x 235mm): $envelope_pdf"
+    log_info "Size: $(du -h "$envelope_pdf" | cut -f1)"
+    log_info "To print: curl -X POST http://localhost:$DEV_PORT/print -F 'document=@$envelope_pdf' -F 'useDirectIpp=true' -F 'paperSize=om_cho-3_120x235mm'"
+}
+
 status() {
     echo "=== Port Status ==="
     lsof -i :$DEV_PORT 2>/dev/null || echo "Port $DEV_PORT: free"
@@ -136,6 +149,9 @@ case "${1:-}" in
     pdf)
         generate_pdf
         ;;
+    envelope)
+        show_envelope
+        ;;
     status)
         status
         ;;
@@ -160,19 +176,20 @@ case "${1:-}" in
         log_info "Dev cycle complete! Server running on port $DEV_PORT"
         ;;
     *)
-        echo "Usage: $0 {build|rebuild|start|stop|restart|health|pdf|status|test|cycle}"
+        echo "Usage: $0 {build|rebuild|start|stop|restart|health|pdf|envelope|status|test|cycle}"
         echo ""
         echo "Commands:"
-        echo "  build   - Build the project"
-        echo "  rebuild - Clean and rebuild"
-        echo "  start   - Start dev server (port $DEV_PORT)"
-        echo "  stop    - Stop dev server"
-        echo "  restart - Stop and start"
-        echo "  health  - Health check"
-        echo "  pdf     - Generate test PDF"
-        echo "  status  - Show port and process status"
-        echo "  test    - Full cycle: build -> start -> health -> pdf -> stop"
-        echo "  cycle   - Dev cycle: rebuild -> start -> health -> pdf (server keeps running)"
+        echo "  build    - Build the project"
+        echo "  rebuild  - Clean and rebuild"
+        echo "  start    - Start dev server (port $DEV_PORT)"
+        echo "  stop     - Stop dev server"
+        echo "  restart  - Stop and start"
+        echo "  health   - Health check"
+        echo "  pdf      - Generate test PDF"
+        echo "  envelope - Show Naga-3 envelope PDF info (120x235mm)"
+        echo "  status   - Show port and process status"
+        echo "  test     - Full cycle: build -> start -> health -> pdf -> stop"
+        echo "  cycle    - Dev cycle: rebuild -> start -> health -> pdf (server keeps running)"
         exit 1
         ;;
 esac
