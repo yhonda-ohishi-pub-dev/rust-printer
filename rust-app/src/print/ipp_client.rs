@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use std::io::Write;
-use std::net::TcpStream;
+use std::net::{Shutdown, TcpStream};
 use std::time::Duration;
 
 /// Print mode: RAW (port 9100) or Direct IPP (port 631)
@@ -78,6 +78,7 @@ impl IppPrinter {
             stream.set_write_timeout(Some(Duration::from_secs(30)))?;
             stream.write_all(&pdf_data)?;
             stream.flush()?;
+            stream.shutdown(Shutdown::Both)?;
 
             tracing::info!("RAW印刷完了: {}", job_name);
             Ok::<_, anyhow::Error>(())

@@ -1,6 +1,5 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use printpdf::*;
-use std::io::BufWriter;
 
 use super::layout::{prepare_ryohi_for_print, PageLayout};
 use crate::models::{format_price, Item};
@@ -26,198 +25,189 @@ impl PdfGenerator {
             anyhow::bail!("No items to generate");
         }
 
-        // Create PDF document (A5 Landscape: 210mm x 148mm)
-        let (doc, page1, layer1) = PdfDocument::new(
-            "Travel Expense Report",
-            Mm(self.layout.page_width as f32),
-            Mm(self.layout.page_height as f32),
-            "Layer 1",
-        );
+        // Create PDF document
+        let mut doc = PdfDocument::new("Travel Expense Report");
 
-        // Add font
-        let font = doc
-            .add_external_font(std::io::Cursor::new(&self.font_bytes))
-            .context("Failed to add font")?;
+        // Parse and add font
+        let font = ParsedFont::from_bytes(&self.font_bytes, 0, &mut Vec::new())
+            .ok_or_else(|| anyhow::anyhow!("Failed to parse font"))?;
+        let font_id = doc.add_font(&font);
 
-        // Process first item on the first page
-        let current_layer = doc.get_page(page1).get_layer(layer1);
-        self.render_page(&current_layer, &font, &items[0])?;
-
-        // Add pages for remaining items
-        for item in items.iter().skip(1) {
-            let (page, layer) = doc.add_page(
+        // Build pages
+        let mut pages = Vec::new();
+        for item in items {
+            let ops = self.build_page_ops(&font_id, item)?;
+            let page = PdfPage::new(
                 Mm(self.layout.page_width as f32),
                 Mm(self.layout.page_height as f32),
-                "Layer 1",
+                ops,
             );
-            let current_layer = doc.get_page(page).get_layer(layer);
-            self.render_page(&current_layer, &font, item)?;
+            pages.push(page);
         }
 
-        // Save to bytes
-        let mut buffer = Vec::new();
-        doc.save(&mut BufWriter::new(std::io::Cursor::new(&mut buffer)))
-            .context("Failed to save PDF")?;
+        // Save to bytes (subset_fonts: true by default in PdfSaveOptions)
+        let pdf_bytes = doc.with_pages(pages).save(
+            &PdfSaveOptions::default(),
+            &mut Vec::new(),
+        );
 
-        Ok(buffer)
+        Ok(pdf_bytes)
     }
 
-    /// Render a single page
-    fn render_page(
-        &self,
-        layer: &PdfLayerReference,
-        font: &IndirectFontRef,
-        item: &Item,
-    ) -> Result<()> {
+    /// Build operations for a single page
+    fn build_page_ops(&self, font_id: &FontId, item: &Item) -> Result<Vec<Op>> {
+        let mut ops = Vec::new();
+
         // Draw page border
-        self.draw_border(layer);
+        ops.extend(self.build_border_ops());
 
         // Draw approval table (right top)
-        self.draw_approval_table(layer, font);
+        ops.extend(self.build_approval_table_ops(font_id));
 
         // Draw base data (title, date, etc.)
-        self.draw_base_data(layer, font, item);
+        ops.extend(self.build_base_data_ops(font_id, item));
 
         // Draw basic info table
-        self.draw_basic_info_table(layer, font);
+        ops.extend(self.build_basic_info_table_ops(font_id));
 
         // Draw main data table
-        self.draw_main_data_table(layer, font);
+        ops.extend(self.build_main_data_table_ops(font_id));
 
         // Draw summary table
-        self.draw_summary_table(layer, font);
+        ops.extend(self.build_summary_table_ops(font_id));
 
         // Print item data
-        self.print_item(layer, font, item);
+        ops.extend(self.build_item_ops(font_id, item));
 
-        Ok(())
+        Ok(ops)
     }
 
-    /// Draw page border
-    fn draw_border(&self, layer: &PdfLayerReference) {
+    /// Build page border operations
+    fn build_border_ops(&self) -> Vec<Op> {
         let start_x = 10.0_f32;
         let start_y = (self.layout.page_height - 15.0) as f32;
         let end_x = (self.layout.page_width - 10.0) as f32;
         let end_y = 10.0_f32;
 
-        layer.set_outline_thickness(0.5);
-        layer.set_outline_color(Color::Rgb(Rgb::new(0.0, 0.0, 0.0, None)));
+        let mut ops = vec![
+            Op::SetOutlineThickness { pt: Pt(0.5) },
+            Op::SetOutlineColor { col: Color::Rgb(Rgb::new(0.0, 0.0, 0.0, None)) },
+        ];
 
         // Draw border rectangle using lines
-        self.draw_line_segment(layer, start_x, start_y, end_x, start_y);
-        self.draw_line_segment(layer, end_x, start_y, end_x, end_y);
-        self.draw_line_segment(layer, end_x, end_y, start_x, end_y);
-        self.draw_line_segment(layer, start_x, end_y, start_x, start_y);
+        ops.extend(self.line_segment_ops(start_x, start_y, end_x, start_y));
+        ops.extend(self.line_segment_ops(end_x, start_y, end_x, end_y));
+        ops.extend(self.line_segment_ops(end_x, end_y, start_x, end_y));
+        ops.extend(self.line_segment_ops(start_x, end_y, start_x, start_y));
+
+        ops
     }
 
-    /// Draw approval table
-    fn draw_approval_table(&self, layer: &PdfLayerReference, font: &IndirectFontRef) {
+    /// Build approval table operations
+    fn build_approval_table_ops(&self, font_id: &FontId) -> Vec<Op> {
         let start_x = 155.0_f32;
         let start_y = (self.layout.page_height - 25.0) as f32;
         let col_width = 15.0_f32;
         let row_height1 = 5.0_f32;
         let row_height2 = 15.0_f32;
 
-        layer.set_outline_thickness(0.2);
+        let mut ops = vec![Op::SetOutlineThickness { pt: Pt(0.2) }];
 
         let headers = ["社　長", "会　計", "所　属"];
         for (i, header) in headers.iter().enumerate() {
             let x = start_x + (i as f32) * col_width;
 
             // Header cell
-            self.draw_rect(layer, x, start_y, col_width, row_height1);
-            self.draw_text_centered(layer, font, 9.0, header, x, start_y - 4.0, col_width);
+            ops.extend(self.rect_ops(x, start_y, col_width, row_height1));
+            ops.extend(self.text_centered_ops(font_id, 9.0, header, x, start_y - 4.0, col_width));
 
             // Data cell (empty)
-            self.draw_rect(layer, x, start_y - row_height1, col_width, row_height2);
+            ops.extend(self.rect_ops(x, start_y - row_height1, col_width, row_height2));
         }
+
+        ops
     }
 
-    /// Draw base data (title, date, office)
-    fn draw_base_data(&self, layer: &PdfLayerReference, font: &IndirectFontRef, item: &Item) {
+    /// Build base data operations (title, date, office)
+    fn build_base_data_ops(&self, font_id: &FontId, item: &Item) -> Vec<Op> {
         let start_x = 10.0_f32;
         let start_y = (self.layout.page_height - 15.0) as f32;
+        let mut ops = Vec::new();
 
         // Title
         let title = "出 張 旅 費 日 当 駐 車 料 込 精 算 書";
-        layer.use_text(title.to_string(), 14.0, Mm(start_x + 13.0), Mm(start_y - 5.0), font);
+        ops.extend(self.text_ops(font_id, 14.0, title, start_x + 13.0, start_y - 5.0));
 
         // Title underlines (2 lines)
         let title_width = self.estimate_text_width(title, 14.0);
-        self.draw_line_segment(
-            layer,
+        ops.extend(self.line_segment_ops(
             start_x + 13.0,
             start_y - 6.0,
             start_x + 15.0 + title_width,
             start_y - 6.0,
-        );
-        self.draw_line_segment(
-            layer,
+        ));
+        ops.extend(self.line_segment_ops(
             start_x + 13.0,
             start_y - 7.0,
             start_x + 15.0 + title_width,
             start_y - 7.0,
-        );
+        ));
 
         // Settlement date
         if let Some(ref pay_day) = item.pay_day {
             if let Ok(date) = chrono::NaiveDate::parse_from_str(pay_day, "%Y-%m-%d") {
                 let pay_day_str = date.format("清算日　%Y年 %m月 %d日").to_string();
-                layer.use_text(pay_day_str, 9.0, Mm(start_x + 100.0), Mm(start_y - 5.0), font);
+                ops.extend(self.text_ops(font_id, 9.0, &pay_day_str, start_x + 100.0, start_y - 5.0));
             }
         }
 
         // Office (right side)
         if let Some(ref office) = item.office {
             let text_width = self.estimate_text_width(office, 10.0);
-            layer.use_text(
-                office.clone(),
+            ops.extend(self.text_ops(
+                font_id,
                 10.0,
-                Mm(start_x + 190.0 - text_width - 2.0),
-                Mm(start_y - 5.0),
-                font,
-            );
+                office,
+                start_x + 190.0 - text_width - 2.0,
+                start_y - 5.0,
+            ));
         }
+
+        ops
     }
 
-    /// Draw basic info table
-    fn draw_basic_info_table(&self, layer: &PdfLayerReference, font: &IndirectFontRef) {
+    /// Build basic info table operations
+    fn build_basic_info_table_ops(&self, font_id: &FontId) -> Vec<Op> {
         let start_x = 10.0_f32;
         let start_y = (self.layout.page_height - 30.0) as f32;
 
-        layer.set_outline_thickness(0.2);
+        let mut ops = vec![Op::SetOutlineThickness { pt: Pt(0.2) }];
 
         // Departure/Return labels (left side)
         let row_height = 3.5_f32;
         let diff_start_y = 3.0_f32;
-        layer.use_text(
-            "出発".to_string(),
+        ops.extend(self.text_ops(font_id, 9.0, "出発", start_x + 1.0, start_y - diff_start_y));
+        ops.extend(self.text_ops(
+            font_id,
             9.0,
-            Mm(start_x + 1.0),
-            Mm(start_y - diff_start_y),
-            font,
-        );
-        layer.use_text(
-            "　　月　　日".to_string(),
+            "　　月　　日",
+            start_x + 2.0,
+            start_y - diff_start_y - row_height,
+        ));
+        ops.extend(self.text_ops(
+            font_id,
             9.0,
-            Mm(start_x + 2.0),
-            Mm(start_y - diff_start_y - row_height),
-            font,
-        );
-        layer.use_text(
-            "帰着".to_string(),
+            "帰着",
+            start_x + 1.0,
+            start_y - diff_start_y - row_height * 2.0,
+        ));
+        ops.extend(self.text_ops(
+            font_id,
             9.0,
-            Mm(start_x + 1.0),
-            Mm(start_y - diff_start_y - row_height * 2.0),
-            font,
-        );
-        layer.use_text(
-            "　　月　　日".to_string(),
-            9.0,
-            Mm(start_x + 2.0),
-            Mm(start_y - diff_start_y - row_height * 3.0),
-            font,
-        );
+            "　　月　　日",
+            start_x + 2.0,
+            start_y - diff_start_y - row_height * 3.0,
+        ));
 
         // Table headers
         let headers = ["", "出張目的", "車両No.", "氏　名", "サイン"];
@@ -225,20 +215,22 @@ impl PdfGenerator {
 
         let mut current_x = start_x;
         for (i, header) in headers.iter().enumerate() {
-            self.draw_rect(layer, current_x, start_y, col_widths[i], 15.0);
+            ops.extend(self.rect_ops(current_x, start_y, col_widths[i], 15.0));
             if !header.is_empty() {
-                layer.use_text(header.to_string(), 9.0, Mm(current_x + 1.0), Mm(start_y - 4.0), font);
+                ops.extend(self.text_ops(font_id, 9.0, header, current_x + 1.0, start_y - 4.0));
             }
             current_x += col_widths[i];
         }
+
+        ops
     }
 
-    /// Draw main data table
-    fn draw_main_data_table(&self, layer: &PdfLayerReference, font: &IndirectFontRef) {
+    /// Build main data table operations
+    fn build_main_data_table_ops(&self, font_id: &FontId) -> Vec<Op> {
         let start_x = 10.0_f32;
         let start_y = (self.layout.page_height - 45.0) as f32;
 
-        layer.set_outline_thickness(0.2);
+        let mut ops = vec![Op::SetOutlineThickness { pt: Pt(0.2) }];
 
         let col_widths: [f32; 9] = [10.0, 17.0, 40.0, 30.0, 15.0, 15.0, 15.0, 25.0, 23.0];
         let row_height = 10.0_f32;
@@ -259,16 +251,15 @@ impl PdfGenerator {
 
         let mut current_x = start_x;
         for (i, header) in headers.iter().enumerate() {
-            self.draw_rect(layer, current_x, start_y, col_widths[i], header_height);
-            self.draw_text_centered(
-                layer,
-                font,
+            ops.extend(self.rect_ops(current_x, start_y, col_widths[i], header_height));
+            ops.extend(self.text_centered_ops(
+                font_id,
                 8.0,
                 header,
                 current_x,
                 start_y - 3.0,
                 col_widths[i],
-            );
+            ));
             current_x += col_widths[i];
         }
 
@@ -280,28 +271,29 @@ impl PdfGenerator {
             for (col, &width) in col_widths.iter().enumerate() {
                 if col == 2 {
                     // 摘要欄は左右の線のみ
-                    self.draw_line_segment(layer, current_x, current_y, current_x, current_y - row_height);
-                    self.draw_line_segment(
-                        layer,
+                    ops.extend(self.line_segment_ops(current_x, current_y, current_x, current_y - row_height));
+                    ops.extend(self.line_segment_ops(
                         current_x + width,
                         current_y,
                         current_x + width,
                         current_y - row_height,
-                    );
+                    ));
                 } else {
-                    self.draw_rect(layer, current_x, current_y, width, row_height);
+                    ops.extend(self.rect_ops(current_x, current_y, width, row_height));
                 }
                 current_x += width;
             }
         }
+
+        ops
     }
 
-    /// Draw summary table
-    fn draw_summary_table(&self, layer: &PdfLayerReference, font: &IndirectFontRef) {
+    /// Build summary table operations
+    fn build_summary_table_ops(&self, font_id: &FontId) -> Vec<Op> {
         let start_x = 10.0_f32;
         let start_y = (self.layout.page_height - 119.0) as f32;
 
-        layer.set_outline_thickness(0.2);
+        let mut ops = vec![Op::SetOutlineThickness { pt: Pt(0.2) }];
 
         let col_widths = [145.0_f32, 45.0_f32];
         let row_height = 19.0_f32;
@@ -309,22 +301,25 @@ impl PdfGenerator {
 
         let mut current_x = start_x;
         for (i, header) in headers.iter().enumerate() {
-            self.draw_rect(layer, current_x, start_y, col_widths[i], row_height);
-            layer.use_text(header.to_string(), 8.0, Mm(current_x + 2.0), Mm(start_y - 4.0), font);
+            ops.extend(self.rect_ops(current_x, start_y, col_widths[i], row_height));
+            ops.extend(self.text_ops(font_id, 8.0, header, current_x + 2.0, start_y - 4.0));
             current_x += col_widths[i];
         }
+
+        ops
     }
 
-    /// Print item data
-    fn print_item(&self, layer: &PdfLayerReference, font: &IndirectFontRef, item: &Item) {
+    /// Build item data operations
+    fn build_item_ops(&self, font_id: &FontId, item: &Item) -> Vec<Op> {
         let start_x = 14.0_f32;
         let start_y = (self.layout.page_height - 36.8) as f32;
+        let mut ops = Vec::new();
 
         // Start date
         if let Some(ref start_date) = item.start_date {
             if let Ok(date) = chrono::NaiveDate::parse_from_str(start_date, "%Y-%m-%d") {
                 let date_str = date.format("%m　 %d").to_string();
-                layer.use_text(date_str, 10.0, Mm(start_x), Mm(start_y), font);
+                ops.extend(self.text_ops(font_id, 10.0, &date_str, start_x, start_y));
             }
         }
 
@@ -332,52 +327,54 @@ impl PdfGenerator {
         if let Some(ref end_date) = item.end_date {
             if let Ok(date) = chrono::NaiveDate::parse_from_str(end_date, "%Y-%m-%d") {
                 let date_str = date.format("%m　 %d").to_string();
-                layer.use_text(date_str, 10.0, Mm(start_x), Mm(start_y - 7.0), font);
+                ops.extend(self.text_ops(font_id, 10.0, &date_str, start_x, start_y - 7.0));
             }
         }
 
         // Purpose
         if let Some(ref purpose) = item.purpose {
-            layer.use_text(purpose.clone(), 10.0, Mm(start_x + 32.0), Mm(start_y - 7.0), font);
+            ops.extend(self.text_ops(font_id, 10.0, purpose, start_x + 32.0, start_y - 7.0));
         }
 
         // Car
         if !item.car.is_empty() {
-            layer.use_text(item.car.clone(), 10.0, Mm(start_x + 52.0), Mm(start_y - 7.0), font);
+            ops.extend(self.text_ops(font_id, 10.0, &item.car, start_x + 52.0, start_y - 7.0));
         }
 
         // Name
         if !item.name.is_empty() {
-            layer.use_text(item.name.clone(), 10.0, Mm(start_x + 85.0), Mm(start_y - 7.0), font);
+            ops.extend(self.text_ops(font_id, 10.0, &item.name, start_x + 85.0, start_y - 7.0));
         }
 
         // Total price (upper total field)
         let price_str = format_price(item.price);
         let text_width = self.estimate_text_width(&price_str, 12.0);
-        layer.use_text(
-            price_str,
+        ops.extend(self.text_ops(
+            font_id,
             12.0,
-            Mm((self.layout.right_margin as f32) - text_width - 5.0),
-            Mm((self.layout.top_margin - 12.0) as f32),
-            font,
-        );
+            &price_str,
+            (self.layout.right_margin as f32) - text_width - 5.0,
+            (self.layout.top_margin - 12.0) as f32,
+        ));
 
         // Print ryohi items
-        self.print_ryohi_items(layer, font, &item.ryohi);
+        ops.extend(self.build_ryohi_ops(font_id, &item.ryohi));
+
+        ops
     }
 
-    /// Print ryohi items
-    fn print_ryohi_items(
+    /// Build ryohi items operations
+    fn build_ryohi_ops(
         &self,
-        layer: &PdfLayerReference,
-        font: &IndirectFontRef,
+        font_id: &FontId,
         ryohi_list: &[crate::models::Ryohi],
-    ) {
+    ) -> Vec<Op> {
         let start_x = 10.0_f32;
         let start_y = (self.layout.page_height - 47.0) as f32;
         let col_widths: [f32; 9] = [10.0, 17.0, 40.0, 30.0, 15.0, 15.0, 15.0, 25.0, 23.0];
         let row_height = 10.0_f32;
 
+        let mut ops = Vec::new();
         let mut current_row = 0_usize;
 
         for ryohi in ryohi_list {
@@ -407,44 +404,42 @@ impl PdfGenerator {
                 // Date
                 if row < print_data.date_lines.len() && !print_data.date_lines[row].is_empty() {
                     let date = &print_data.date_lines[row];
-                    self.draw_text_centered(
-                        layer,
-                        font,
+                    ops.extend(self.text_centered_ops(
+                        font_id,
                         10.0,
                         date,
                         current_x,
                         current_y - 6.0,
                         col_widths[0],
-                    );
+                    ));
                 }
                 current_x += col_widths[0];
 
                 // Dest
                 if row < print_data.dest_lines.len() && !print_data.dest_lines[row].is_empty() {
                     let dest = &print_data.dest_lines[row];
-                    self.draw_text_centered(
-                        layer,
-                        font,
+                    ops.extend(self.text_centered_ops(
+                        font_id,
                         10.0,
                         dest,
                         current_x,
                         current_y - 6.0,
                         col_widths[1],
-                    );
+                    ));
                 }
                 current_x += col_widths[1];
 
                 // Detail
                 if row < print_data.detail_lines.len() && !print_data.detail_lines[row].is_empty() {
-                    let detail = print_data.detail_lines[row].clone();
-                    layer.use_text(detail, 10.0, Mm(current_x + 1.0), Mm(current_y - 6.0), font);
+                    let detail = &print_data.detail_lines[row];
+                    ops.extend(self.text_ops(font_id, 10.0, detail, current_x + 1.0, current_y - 6.0));
                 }
                 current_x += col_widths[2];
 
                 // Kukan
                 if row < print_data.kukan_lines.len() && !print_data.kukan_lines[row].is_empty() {
-                    let kukan = print_data.kukan_lines[row].clone();
-                    layer.use_text(kukan, 10.0, Mm(current_x + 1.0), Mm(current_y - 6.0), font);
+                    let kukan = &print_data.kukan_lines[row];
+                    ops.extend(self.text_ops(font_id, 10.0, kukan, current_x + 1.0, current_y - 6.0));
                 }
                 current_x += col_widths[3];
 
@@ -453,29 +448,29 @@ impl PdfGenerator {
 
                 // Price
                 if row < print_data.price_lines.len() && !print_data.price_lines[row].is_empty() {
-                    let price_str = print_data.price_lines[row].clone();
-                    let text_width = self.estimate_text_width(&price_str, 10.0);
-                    layer.use_text(
-                        price_str,
+                    let price_str = &print_data.price_lines[row];
+                    let text_width = self.estimate_text_width(price_str, 10.0);
+                    ops.extend(self.text_ops(
+                        font_id,
                         10.0,
-                        Mm(current_x + col_widths[7] - text_width - 1.0),
-                        Mm(current_y - 6.0),
-                        font,
-                    );
+                        price_str,
+                        current_x + col_widths[7] - text_width - 1.0,
+                        current_y - 6.0,
+                    ));
                 }
                 current_x += col_widths[7];
 
                 // Vol
                 if row < print_data.vol_lines.len() && !print_data.vol_lines[row].is_empty() {
-                    let vol_str = print_data.vol_lines[row].clone();
-                    let text_width = self.estimate_text_width(&vol_str, 10.0);
-                    layer.use_text(
-                        vol_str,
+                    let vol_str = &print_data.vol_lines[row];
+                    let text_width = self.estimate_text_width(vol_str, 10.0);
+                    ops.extend(self.text_ops(
+                        font_id,
                         10.0,
-                        Mm(current_x + col_widths[8] - text_width - 1.0),
-                        Mm(current_y - 6.0),
-                        font,
-                    );
+                        vol_str,
+                        current_x + col_widths[8] - text_width - 1.0,
+                        current_y - 6.0,
+                    ));
                 }
 
                 drawn_rows += 1;
@@ -483,43 +478,62 @@ impl PdfGenerator {
 
             current_row += drawn_rows;
         }
+
+        ops
     }
 
     // Helper methods
 
-    fn draw_rect(&self, layer: &PdfLayerReference, x: f32, y: f32, width: f32, height: f32) {
+    fn rect_ops(&self, x: f32, y: f32, width: f32, height: f32) -> Vec<Op> {
         // Draw rectangle using 4 lines
-        self.draw_line_segment(layer, x, y, x + width, y);
-        self.draw_line_segment(layer, x + width, y, x + width, y - height);
-        self.draw_line_segment(layer, x + width, y - height, x, y - height);
-        self.draw_line_segment(layer, x, y - height, x, y);
+        let mut ops = Vec::new();
+        ops.extend(self.line_segment_ops(x, y, x + width, y));
+        ops.extend(self.line_segment_ops(x + width, y, x + width, y - height));
+        ops.extend(self.line_segment_ops(x + width, y - height, x, y - height));
+        ops.extend(self.line_segment_ops(x, y - height, x, y));
+        ops
     }
 
-    fn draw_line_segment(&self, layer: &PdfLayerReference, x1: f32, y1: f32, x2: f32, y2: f32) {
+    fn line_segment_ops(&self, x1: f32, y1: f32, x2: f32, y2: f32) -> Vec<Op> {
         let points = vec![
-            (Point::new(Mm(x1), Mm(y1)), false),
-            (Point::new(Mm(x2), Mm(y2)), false),
+            LinePoint { p: Point::new(Mm(x1), Mm(y1)), bezier: false },
+            LinePoint { p: Point::new(Mm(x2), Mm(y2)), bezier: false },
         ];
         let line = Line {
             points,
             is_closed: false,
         };
-        layer.add_line(line);
+        vec![Op::DrawLine { line }]
     }
 
-    fn draw_text_centered(
+    fn text_ops(&self, font_id: &FontId, size: f32, text: &str, x: f32, y: f32) -> Vec<Op> {
+        vec![
+            Op::StartTextSection,
+            Op::SetFontSize {
+                font: font_id.clone(),
+                size: Pt(size),
+            },
+            Op::SetTextCursor { pos: Point::new(Mm(x), Mm(y)) },
+            Op::WriteText {
+                font: font_id.clone(),
+                items: vec![TextItem::Text(text.to_string())],
+            },
+            Op::EndTextSection,
+        ]
+    }
+
+    fn text_centered_ops(
         &self,
-        layer: &PdfLayerReference,
-        font: &IndirectFontRef,
+        font_id: &FontId,
         size: f32,
         text: &str,
         x: f32,
         y: f32,
         width: f32,
-    ) {
+    ) -> Vec<Op> {
         let text_width = self.estimate_text_width(text, size);
         let centered_x = x + (width - text_width) / 2.0;
-        layer.use_text(text.to_string(), size, Mm(centered_x), Mm(y), font);
+        self.text_ops(font_id, size, text, centered_x, y)
     }
 
     fn estimate_text_width(&self, text: &str, size: f32) -> f32 {

@@ -6,8 +6,7 @@ services:
       context: ./rust-app
       dockerfile: Dockerfile
     container_name: rust-pdf-printer
-    ports:
-      - "8081:8081"
+    network_mode: host
     environment:
       - RUST_LOG=info
       - PRINTER_IP=${PRINTER_IP:-172.18.21.60}
