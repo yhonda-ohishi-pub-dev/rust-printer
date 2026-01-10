@@ -1,20 +1,20 @@
 # Rust PDF Printer
 
-Canon LBP221プリンター向けのPDF生成・印刷システム。Rustで実装されたHTTPサーバーとCUPSサイドカーをDocker Composeで構成。
+Epson PX-M650F / Canon LBP221 プリンター向けのPDF生成・印刷システム。Rustで実装されたHTTPサーバーをDockerで構成。
 
 ## 機能
 
 - 出張旅費精算書のPDF生成（A5横向き）
-- IPPプロトコルによるCUPS経由の印刷
-- 日本語テキスト対応（Noto Sans JP）
+- RAW印刷（ポート9100）またはIPPプロトコルによる直接印刷
+- 日本語テキスト対応（IPAexゴシック）
 
 ## アーキテクチャ
 
 ```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│   HTTP Client   │────▶│   Rust App      │────▶│   CUPS Sidecar  │────▶ Canon LBP221
-│                 │     │   (Axum)        │ IPP │                 │
-└─────────────────┘     └─────────────────┘     └─────────────────┘
+┌─────────────────┐     ┌─────────────────┐
+│   HTTP Client   │────▶│   Rust App      │────▶ Printer (RAW/IPP)
+│                 │     │   (Axum)        │
+└─────────────────┘     └─────────────────┘
 ```
 
 ## セットアップ
@@ -28,11 +28,11 @@ cp .env.example .env
 
 ### 2. フォントの配置
 
-Google FontsからNoto Sans JPをダウンロードし、`fonts/`ディレクトリに配置：
+`fonts/`ディレクトリにIPAexゴシックフォントを配置：
 
 ```bash
 mkdir -p fonts
-# NotoSansJP-Regular.ttf を fonts/ に配置
+# ipaexg.ttf を fonts/ に配置
 ```
 
 ### 3. Docker Composeで起動
@@ -43,34 +43,45 @@ docker-compose up --build
 
 ## API
 
+### GET /health
+
+ヘルスチェック。
+
+```bash
+curl http://localhost:8081/health
+```
+
 ### POST /generate-pdf
 
 出張旅費精算書のPDFを生成して返します（印刷なし）。
 
+**リクエスト形式: 配列を直接送信**
+
 ```bash
-curl -X POST http://localhost:3000/generate-pdf \
+curl -X POST http://localhost:8081/generate-pdf \
   -H "Content-Type: application/json" \
-  -d '{
-    "items": [{
-      "name": "山田太郎",
-      "car": "あ1234",
-      "price": 15000,
-      "start_date": "2026-01-08",
-      "end_date": "2026-01-08",
-      "purpose": "出張",
-      "office": "本社",
-      "pay_day": "2026-01-15",
-      "ryohi": []
-    }]
-  }' --output output.pdf
+  -d '[{
+    "name": "山田太郎",
+    "car": "あ1234",
+    "price": 15000,
+    "start_date": "2026-01-08",
+    "end_date": "2026-01-08",
+    "purpose": "出張",
+    "office": "本社",
+    "pay_day": "2026-01-15",
+    "ryohi": []
+  }]' --output output.pdf
 ```
 
 ### POST /print-pdf
 
 出張旅費精算書のPDFを生成して印刷します。
 
+**リクエスト形式: オブジェクト（itemsフィールド必須）**
+
 ```bash
-curl -X POST http://localhost:3000/print-pdf \
+# RAW印刷（デフォルト、ポート9100）
+curl -X POST http://localhost:8081/print-pdf \
   -H "Content-Type: application/json" \
   -d '{
     "items": [{
@@ -84,8 +95,19 @@ curl -X POST http://localhost:3000/print-pdf \
       "pay_day": "2026-01-15",
       "ryohi": []
     }],
+    "print": true
+  }'
+
+# Direct IPP印刷（PX-M650F等）
+curl -X POST http://localhost:8081/print-pdf \
+  -H "Content-Type: application/json" \
+  -d '{
+    "items": [...],
     "print": true,
-    "printerName": "LBP221"
+    "use_direct_ipp": true,
+    "printer_ip": "192.168.1.100",
+    "paper_size": "iso_a5_148x210mm",
+    "color_mode": "monochrome"
   }'
 ```
 
@@ -94,9 +116,16 @@ curl -X POST http://localhost:3000/print-pdf \
 既存のPDFファイルを印刷します（封筒印刷など）。
 
 ```bash
-curl -X POST http://localhost:3000/print \
+# RAW印刷
+curl -X POST http://localhost:8081/print \
+  -F "document=@/path/to/envelope.pdf"
+
+# Direct IPP印刷
+curl -X POST http://localhost:8081/print \
   -F "document=@/path/to/envelope.pdf" \
-  -F "printer=LBP221-futo"
+  -F "use_direct_ipp=true" \
+  -F "printer_ip=192.168.1.100" \
+  -F "paper_size=iso_a5_148x210mm"
 ```
 
 **レスポンス例:**
@@ -105,7 +134,7 @@ curl -X POST http://localhost:3000/print \
   "status": "success",
   "message": "PDF printed successfully",
   "filename": "envelope.pdf",
-  "printer": "LBP221-futo",
+  "printer": "192.168.1.100 (RAW)",
   "printed": true,
   "file_size": 12345
 }
@@ -120,11 +149,19 @@ cd rust-app
 cargo check
 ```
 
-### ローカル実行（CUPSなし）
+### ローカル実行
 
 ```bash
 cd rust-app
 cargo run
+```
+
+### 開発用スクリプト
+
+```bash
+./dev.sh        # docker-compose up --build
+./dev.sh down   # docker-compose down
+./dev.sh logs   # docker-compose logs -f
 ```
 
 ## CI/CD & デプロイ
@@ -141,10 +178,11 @@ git push
 
 ```bash
 # GitHub Container Registryにログイン
-echo $GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
+gh auth refresh -s write:packages
+gh auth token | docker login ghcr.io -u USERNAME --password-stdin
 
 # pre-pushフックをインストール
-cp scripts/pre-push .git/hooks/pre-push
+cp scripts/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
 ```
 
 ### リリース手順
@@ -157,7 +195,7 @@ cp scripts/pre-push .git/hooks/pre-push
 
 CI/CD が `/opt/rust-printer/` に以下を自動コピー:
 - `docker-compose.prod.yml`
-- `fonts/NotoSansJP-Regular.ttf`
+- `fonts/ipaexg.ttf`
 
 ### 本番サーバー（ohishi-data）初回セットアップ
 
@@ -180,7 +218,6 @@ docker-compose -f docker-compose.prod.yml up -d
 ### イメージ
 
 - `ghcr.io/yhonda-ohishi-pub-dev/rust-pdf-printer`
-- `ghcr.io/yhonda-ohishi-pub-dev/cups-sidecar`
 
 ### ネットワーク
 
@@ -190,8 +227,8 @@ php3 からは `http://rust-pdf-printer:8081` でアクセス可能。
 ## 技術スタック
 
 - **Rust**: Axum (HTTP), printpdf (PDF生成), ipp (印刷プロトコル)
-- **Docker**: マルチコンテナ構成
-- **CUPS**: 印刷サーバー
+- **Docker**: シングルコンテナ構成
+- **印刷**: RAW (ポート9100) / Direct IPP
 
 ## ライセンス
 
