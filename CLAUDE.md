@@ -90,6 +90,11 @@ rust-printer/
 | `/print-pdf` | POST | PDF生成+印刷 | JSON (PrintRequest) |
 | `/print` | POST | 既存PDF印刷（封筒印刷など） | Multipart form |
 
+## Bash コマンド注意事項
+
+- `sleep` コマンドの使用禁止（レスポンスが返ってこなくなる）
+- バックグラウンドプロセス起動時は `&` で起動後、別のBashコマンドで確認
+
 ## Development Commands
 
 ```bash

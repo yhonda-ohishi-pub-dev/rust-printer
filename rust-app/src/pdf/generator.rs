@@ -138,18 +138,18 @@ impl PdfGenerator {
         let title = "出 張 旅 費 日 当 駐 車 料 込 精 算 書";
         ops.extend(self.text_ops(font_id, 14.0, title, start_x + 13.0, start_y - 5.0));
 
-        // Title underlines (2 lines)
-        let title_width = self.estimate_text_width(title, 14.0);
+        // Title underlines (2 lines) - 「精算書」の下で止める
+        let title_width = 81.0; // 固定幅で調整 (1cm短く)
         ops.extend(self.line_segment_ops(
             start_x + 13.0,
             start_y - 6.0,
-            start_x + 15.0 + title_width,
+            start_x + 13.0 + title_width,
             start_y - 6.0,
         ));
         ops.extend(self.line_segment_ops(
             start_x + 13.0,
             start_y - 7.0,
-            start_x + 15.0 + title_width,
+            start_x + 13.0 + title_width,
             start_y - 7.0,
         ));
 
@@ -157,7 +157,7 @@ impl PdfGenerator {
         if let Some(ref pay_day) = item.pay_day {
             if let Ok(date) = chrono::NaiveDate::parse_from_str(pay_day, "%Y-%m-%d") {
                 let pay_day_str = date.format("清算日　%Y年 %m月 %d日").to_string();
-                ops.extend(self.text_ops(font_id, 9.0, &pay_day_str, start_x + 100.0, start_y - 5.0));
+                ops.extend(self.text_ops(font_id, 9.0, &pay_day_str, start_x + 110.0, start_y - 5.0));
             }
         }
 
@@ -211,7 +211,7 @@ impl PdfGenerator {
 
         // Table headers
         let headers = ["", "出張目的", "車両No.", "氏　名", "サイン"];
-        let col_widths: [f32; 5] = [31.0, 25.0, 28.75, 30.0, 30.0];
+        let col_widths: [f32; 5] = [31.0, 25.0, 28.75, 30.0, 30.25]; // サイン列調整
 
         let mut current_x = start_x;
         for (i, header) in headers.iter().enumerate() {
@@ -232,7 +232,8 @@ impl PdfGenerator {
 
         let mut ops = vec![Op::SetOutlineThickness { pt: Pt(0.2) }];
 
-        let col_widths: [f32; 9] = [10.0, 17.0, 40.0, 30.0, 15.0, 15.0, 15.0, 25.0, 23.0];
+        // 日付列の幅を2mm広げて右線を右にずらす (10.0→12.0)
+        let col_widths: [f32; 9] = [12.0, 17.0, 40.0, 30.0, 15.0, 15.0, 15.0, 25.0, 21.0];
         let row_height = 10.0_f32;
         let header_height = 4.0_f32;
 
@@ -252,11 +253,19 @@ impl PdfGenerator {
         let mut current_x = start_x;
         for (i, header) in headers.iter().enumerate() {
             ops.extend(self.rect_ops(current_x, start_y, col_widths[i], header_height));
+            // 列ごとのオフセット
+            let text_offset = match i {
+                4 => 2.0,  // 交通機関
+                5 => 1.0,  // 運賃
+                6 => 2.0,  // 特別料金
+                7 => 1.0,  // 旅費日当
+                _ => 0.0,
+            };
             ops.extend(self.text_centered_ops(
                 font_id,
                 8.0,
                 header,
-                current_x,
+                current_x + text_offset,
                 start_y - 3.0,
                 col_widths[i],
             ));
@@ -346,15 +355,18 @@ impl PdfGenerator {
             ops.extend(self.text_ops(font_id, 10.0, &item.name, start_x + 85.0, start_y - 7.0));
         }
 
-        // Total price (upper total field)
+        // Total price in summary table (計セルの右側)
         let price_str = format_price(item.price);
-        let text_width = self.estimate_text_width(&price_str, 12.0);
+        let text_width = self.estimate_text_width(&price_str, 10.0);
+        let summary_table_y = (self.layout.page_height - 119.0) as f32;
+        let summary_cell_x = 10.0 + 145.0; // 計セルの開始位置
+        let summary_cell_width = 45.0_f32;
         ops.extend(self.text_ops(
             font_id,
-            12.0,
+            10.0,
             &price_str,
-            (self.layout.right_margin as f32) - text_width - 5.0,
-            (self.layout.top_margin - 12.0) as f32,
+            summary_cell_x + summary_cell_width - text_width - 2.0 - 10.0, // 1cm左
+            summary_table_y - 12.0 + 10.0 - 4.0 + 2.0, // 2mm上
         ));
 
         // Print ryohi items
@@ -371,7 +383,8 @@ impl PdfGenerator {
     ) -> Vec<Op> {
         let start_x = 10.0_f32;
         let start_y = (self.layout.page_height - 47.0) as f32;
-        let col_widths: [f32; 9] = [10.0, 17.0, 40.0, 30.0, 15.0, 15.0, 15.0, 25.0, 23.0];
+        // 日付列の幅を2mm広げて右線を右にずらす (10.0→12.0)
+        let col_widths: [f32; 9] = [12.0, 17.0, 40.0, 30.0, 15.0, 15.0, 15.0, 25.0, 21.0];
         let row_height = 10.0_f32;
 
         let mut ops = Vec::new();
@@ -401,14 +414,14 @@ impl PdfGenerator {
                 let current_y = start_y - (physical_row as f32) * row_height - y_offset;
                 let mut current_x = start_x;
 
-                // Date
+                // Date (2mm右にオフセット)
                 if row < print_data.date_lines.len() && !print_data.date_lines[row].is_empty() {
                     let date = &print_data.date_lines[row];
                     ops.extend(self.text_centered_ops(
                         font_id,
                         10.0,
                         date,
-                        current_x,
+                        current_x + 2.0,
                         current_y - 6.0,
                         col_widths[0],
                     ));
