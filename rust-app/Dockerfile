@@ -1,5 +1,5 @@
-# Stage 1: Build (static linking with musl)
-FROM rust:1.88-alpine AS builder
+# Stage 1: Build Rust app (static linking with musl)
+FROM rust:1.88-alpine AS rust-builder
 
 RUN apk add --no-cache musl-dev openssl-dev openssl-libs-static pkgconfig
 
@@ -22,19 +22,29 @@ COPY src ./src
 # Touch source files to force rebuild and build the application
 RUN touch src/main.rs && cargo build --release
 
-# Stage 2: Runtime (scratch for minimal image)
-FROM scratch
+# Stage 2: Build ppm2pwg
+FROM alpine:3.21 AS ppm2pwg-builder
 
-# Create /tmp directory for tempfile crate
-COPY --from=builder /tmp /tmp
+RUN apk add --no-cache git make g++
+
+WORKDIR /build
+RUN git clone --recursive https://github.com/attah/ppm2pwg.git && \
+    cd ppm2pwg && \
+    make ppm2pwg
+
+# Stage 3: Runtime (alpine for PDF conversion tools)
+FROM alpine:3.21
+
+# Install poppler-utils for pdftoppm (PDF to image conversion)
+RUN apk add --no-cache poppler-utils libstdc++
 
 WORKDIR /app
 
-# Copy CA certificates for HTTPS
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+# Copy ppm2pwg binary
+COPY --from=ppm2pwg-builder /build/ppm2pwg/ppm2pwg /usr/local/bin/ppm2pwg
 
-# Copy binary from builder
-COPY --from=builder /app/target/release/rust-pdf-printer /app/rust-pdf-printer
+# Copy Rust binary
+COPY --from=rust-builder /app/target/release/rust-pdf-printer /app/rust-pdf-printer
 
 # Set environment variables
 ENV RUST_LOG=info
