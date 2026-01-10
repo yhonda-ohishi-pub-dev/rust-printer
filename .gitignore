@@ -24,3 +24,6 @@ Thumbs.db
 # Build artifacts
 *.pdf
 printpdf-src/
+
+# Handover notes
+handover/
