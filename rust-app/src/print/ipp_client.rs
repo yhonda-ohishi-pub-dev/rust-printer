@@ -15,6 +15,7 @@ pub enum PrintMode {
         ipp_path: String,
         paper_size: Option<String>,
         color_mode: Option<String>,
+        document_format: Option<DocumentFormat>,
     },
 }
 
@@ -27,6 +28,18 @@ pub enum DocumentFormat {
     PwgRaster,
     /// image/urf - Apple Raster format (AirPrint compatible)
     Urf,
+}
+
+impl DocumentFormat {
+    /// Parse from string (e.g., "pdf", "urf", "pwg")
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "pdf" => Some(DocumentFormat::Pdf),
+            "urf" | "apple" | "airprint" => Some(DocumentFormat::Urf),
+            "pwg" | "pwg-raster" => Some(DocumentFormat::PwgRaster),
+            _ => None,
+        }
+    }
 }
 
 /// Printer client supporting both RAW TCP and Direct IPP
@@ -58,6 +71,7 @@ impl IppPrinter {
                 ipp_path,
                 paper_size,
                 color_mode,
+                document_format,
             } => {
                 self.print_ipp(
                     pdf_data,
@@ -66,6 +80,7 @@ impl IppPrinter {
                     ipp_path,
                     paper_size.as_deref(),
                     color_mode.as_deref(),
+                    *document_format,
                 )
                 .await
             }
@@ -111,8 +126,11 @@ impl IppPrinter {
         ipp_path: &str,
         paper_size: Option<&str>,
         color_mode: Option<&str>,
+        document_format: Option<DocumentFormat>,
     ) -> Result<u32> {
         // Default to URF (Apple Raster) for Epson inkjets - better compatibility than PWG
+        // Use PDF for Canon laser printers (LBP221 etc.)
+        let format = document_format.unwrap_or(DocumentFormat::Urf);
         self.print_ipp_with_format(
             pdf_data,
             job_name,
@@ -120,7 +138,7 @@ impl IppPrinter {
             ipp_path,
             paper_size,
             color_mode,
-            DocumentFormat::Urf,
+            format,
         )
         .await
     }
@@ -287,8 +305,8 @@ mod tests {
         assert_eq!(map_paper_size("A4"), ("iso_a4_210x297mm".to_string(), false));
         assert_eq!(map_paper_size("a4"), ("iso_a4_210x297mm".to_string(), false));
         assert_eq!(map_paper_size("B5"), ("iso_b5_176x250mm".to_string(), false));
-        assert_eq!(map_paper_size("naga3"), ("om_cho-3_120x235mm".to_string(), true));
-        assert_eq!(map_paper_size("cho3"), ("om_cho-3_120x235mm".to_string(), true));
+        assert_eq!(map_paper_size("naga3"), ("jpn_chou3_120x235mm".to_string(), true));
+        assert_eq!(map_paper_size("cho3"), ("jpn_chou3_120x235mm".to_string(), true));
     }
 
     #[test]
@@ -296,5 +314,16 @@ mod tests {
         assert_eq!(map_color_mode("color"), "color");
         assert_eq!(map_color_mode("mono"), "monochrome");
         assert_eq!(map_color_mode("bw"), "monochrome");
+    }
+
+    #[test]
+    fn test_document_format_from_str() {
+        assert_eq!(DocumentFormat::from_str("pdf"), Some(DocumentFormat::Pdf));
+        assert_eq!(DocumentFormat::from_str("PDF"), Some(DocumentFormat::Pdf));
+        assert_eq!(DocumentFormat::from_str("urf"), Some(DocumentFormat::Urf));
+        assert_eq!(DocumentFormat::from_str("URF"), Some(DocumentFormat::Urf));
+        assert_eq!(DocumentFormat::from_str("pwg"), Some(DocumentFormat::PwgRaster));
+        assert_eq!(DocumentFormat::from_str("pwg-raster"), Some(DocumentFormat::PwgRaster));
+        assert_eq!(DocumentFormat::from_str("unknown"), None);
     }
 }

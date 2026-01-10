@@ -17,6 +17,7 @@ pub struct PrintRequest {
     pub use_direct_ipp: bool,           // true = Direct IPP, false = CUPS
     pub paper_size: Option<String>,     // "A4", "B5", "A3", "Letter", etc.
     pub color_mode: Option<String>,     // "color", "monochrome"
+    pub document_format: Option<String>, // "pdf", "urf", "pwg" (default: "urf" for IPP)
 }
 
 /// API Response for PDF generation/printing

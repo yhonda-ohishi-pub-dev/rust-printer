@@ -94,10 +94,15 @@ pub async fn print_pdf(
         // Determine print mode
         let mode = if request.use_direct_ipp {
             // Direct IPP mode (for PX-M650F etc.)
+            let document_format = request
+                .document_format
+                .as_deref()
+                .and_then(crate::print::DocumentFormat::from_str);
             crate::print::PrintMode::DirectIpp {
                 ipp_path: "/ipp/print".to_string(),
                 paper_size: request.paper_size.clone(),
                 color_mode: request.color_mode.clone(),
+                document_format,
             }
         } else {
             // RAW mode (default, port 9100)
@@ -154,6 +159,7 @@ pub async fn print_file(
     let mut use_direct_ipp: bool = false;
     let mut paper_size: Option<String> = None;
     let mut color_mode: Option<String> = None;
+    let mut document_format: Option<String> = None;
 
     // Parse multipart form
     while let Ok(Some(field)) = multipart.next_field().await {
@@ -192,6 +198,13 @@ pub async fn print_file(
                     }
                 }
             }
+            "documentFormat" | "document_format" => {
+                if let Ok(value) = field.text().await {
+                    if !value.is_empty() {
+                        document_format = Some(value);
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -208,10 +221,14 @@ pub async fn print_file(
 
     // Determine print mode
     let mode = if use_direct_ipp {
+        let doc_format = document_format
+            .as_deref()
+            .and_then(crate::print::DocumentFormat::from_str);
         crate::print::PrintMode::DirectIpp {
             ipp_path: "/ipp/print".to_string(),
             paper_size,
             color_mode,
+            document_format: doc_format,
         }
     } else {
         crate::print::PrintMode::Raw

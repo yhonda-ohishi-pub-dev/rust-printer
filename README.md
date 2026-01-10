@@ -120,13 +120,29 @@ curl -X POST http://localhost:8081/print-pdf \
 curl -X POST http://localhost:8081/print \
   -F "document=@/path/to/envelope.pdf"
 
-# Direct IPP印刷（長3封筒）
+# Direct IPP印刷 - Epson PX-M650F（URF形式、デフォルト）
 curl -X POST http://localhost:8081/print \
   -F "document=@/path/to/envelope.pdf" \
   -F "useDirectIpp=true" \
-  -F "printerIp=192.168.1.100" \
+  -F "printerIp=172.18.21.70" \
   -F "paperSize=naga3"
+
+# Direct IPP印刷 - Canon LBP221（PDF形式）
+curl -X POST http://localhost:8081/print \
+  -F "document=@/path/to/envelope.pdf" \
+  -F "useDirectIpp=true" \
+  -F "printerIp=172.18.21.60" \
+  -F "paperSize=naga3" \
+  -F "documentFormat=pdf"
 ```
+
+#### ドキュメントフォーマット（documentFormat）
+
+| 値 | 説明 | 推奨プリンタ |
+|----|------|-------------|
+| `urf` | URF (Apple Raster) 形式に変換（デフォルト） | Epson PX-M650F |
+| `pdf` | PDFをそのまま送信 | Canon LBP221 |
+| `pwg` | PWG Raster 形式に変換 | 一般的なIPPプリンタ |
 
 #### 対応用紙サイズ
 
