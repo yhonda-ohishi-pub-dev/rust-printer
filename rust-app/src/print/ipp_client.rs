@@ -3,6 +3,8 @@ use std::io::Write;
 use std::net::{Shutdown, TcpStream};
 use std::time::Duration;
 
+use super::pwg_converter::PwgConverter;
+
 /// Print mode: RAW (port 9100) or Direct IPP (port 631)
 #[derive(Debug, Clone)]
 pub enum PrintMode {
@@ -14,6 +16,17 @@ pub enum PrintMode {
         paper_size: Option<String>,
         color_mode: Option<String>,
     },
+}
+
+/// Document format for IPP printing
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DocumentFormat {
+    /// application/pdf - for printers that support PDF natively
+    Pdf,
+    /// image/pwg-raster - PWG Raster format
+    PwgRaster,
+    /// image/urf - Apple Raster format (AirPrint compatible)
+    Urf,
 }
 
 /// Printer client supporting both RAW TCP and Direct IPP
@@ -99,25 +112,82 @@ impl IppPrinter {
         paper_size: Option<&str>,
         color_mode: Option<&str>,
     ) -> Result<u32> {
+        // Default to URF (Apple Raster) for Epson inkjets - better compatibility than PWG
+        self.print_ipp_with_format(
+            pdf_data,
+            job_name,
+            printer_ip,
+            ipp_path,
+            paper_size,
+            color_mode,
+            DocumentFormat::Urf,
+        )
+        .await
+    }
+
+    /// Print via Direct IPP with specified document format
+    pub async fn print_ipp_with_format(
+        &self,
+        pdf_data: Vec<u8>,
+        job_name: &str,
+        printer_ip: &str,
+        ipp_path: &str,
+        paper_size: Option<&str>,
+        color_mode: Option<&str>,
+        format: DocumentFormat,
+    ) -> Result<u32> {
         use ipp::prelude::*;
         use std::io::Cursor;
 
         let uri_string = format!("ipp://{}:631{}", printer_ip, ipp_path);
         let uri: Uri = uri_string.parse().context("Failed to parse printer URI")?;
 
+        // Determine document format and convert if necessary
+        let (print_data, mime_type) = match format {
+            DocumentFormat::Pdf => {
+                tracing::info!("Using PDF format (application/pdf)");
+                (pdf_data, "application/pdf")
+            }
+            DocumentFormat::PwgRaster => {
+                tracing::info!("Converting PDF to PWG Raster format");
+                let media = paper_size.map(|s| map_paper_size(s).0);
+                let pwg_data = tokio::task::spawn_blocking(move || {
+                    PwgConverter::convert(&pdf_data, 300, media.as_deref())
+                })
+                .await
+                .context("PWG conversion task failed")??;
+                (pwg_data, "image/pwg-raster")
+            }
+            DocumentFormat::Urf => {
+                tracing::info!("Converting PDF to URF (Apple Raster) format");
+                let media = paper_size.map(|s| map_paper_size(s).0);
+                let urf_data = tokio::task::spawn_blocking(move || {
+                    PwgConverter::convert_to_urf(&pdf_data, 300, media.as_deref())
+                })
+                .await
+                .context("URF conversion task failed")??;
+                (urf_data, "image/urf")
+            }
+        };
+
         tracing::info!(
-            "IPP直接印刷: {} (用紙: {:?}, カラー: {:?})",
+            "IPP直接印刷: {} (用紙: {:?}, カラー: {:?}, format: {})",
             uri,
             paper_size,
-            color_mode
+            color_mode,
+            mime_type
         );
 
         // Build IPP attributes
-        let payload = IppPayload::new(Cursor::new(pdf_data));
+        let payload = IppPayload::new(Cursor::new(print_data));
         let mut builder = IppOperationBuilder::print_job(uri.clone(), payload)
             .attribute(IppAttribute::new(
                 "job-name",
                 IppValue::NameWithoutLanguage(job_name.to_string()),
+            ))
+            .attribute(IppAttribute::new(
+                "document-format",
+                IppValue::MimeMediaType(mime_type.to_string()),
             ));
 
         if let Some(size) = paper_size {
@@ -188,9 +258,9 @@ fn map_paper_size(size: &str) -> (String, bool) {
         "b5" => "iso_b5_176x250mm".to_string(),
         "letter" => "na_letter_8.5x11in".to_string(),
         "legal" => "na_legal_8.5x14in".to_string(),
-        // Japanese envelopes
-        "naga3" | "cho3" | "長3" => "om_cho-3_120x235mm".to_string(),
-        "naga4" | "cho4" | "長4" => "om_cho-4_90x205mm".to_string(),
+        // Japanese envelopes (use jpn_ prefix for Epson printers)
+        "naga3" | "cho3" | "長3" => "jpn_chou3_120x235mm".to_string(),
+        "naga4" | "cho4" | "長4" => "jpn_chou4_90x205mm".to_string(),
         // If already in IPP format (contains underscore), use as-is
         s if s.contains('_') => s.to_string(),
         _ => "iso_a4_210x297mm".to_string(),

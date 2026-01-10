@@ -34,5 +34,8 @@ anyhow = "1.0"
 # Regex for text processing
 regex = "1.10"
 
+# Temporary files for PWG conversion
+tempfile = "3.10"
+
 [dev-dependencies]
 tokio-test = "0.4"
