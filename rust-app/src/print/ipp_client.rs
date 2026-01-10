@@ -121,10 +121,18 @@ impl IppPrinter {
             ));
 
         if let Some(size) = paper_size {
+            let (media, is_envelope) = map_paper_size(size);
             builder = builder.attribute(IppAttribute::new(
                 "media",
-                IppValue::Keyword(map_paper_size(size)),
+                IppValue::Keyword(media),
             ));
+            if is_envelope {
+                builder = builder.attribute(IppAttribute::new(
+                    "media-type",
+                    IppValue::Keyword("envelope".to_string()),
+                ));
+                tracing::info!("封筒モード: media-type=envelope を設定");
+            }
         }
 
         if let Some(color) = color_mode {
@@ -165,9 +173,15 @@ impl IppPrinter {
     }
 }
 
-/// Map paper size to IPP media keyword
-fn map_paper_size(size: &str) -> String {
-    match size.to_lowercase().as_str() {
+/// Map paper size to IPP media keyword and detect if envelope
+fn map_paper_size(size: &str) -> (String, bool) {
+    let lower = size.to_lowercase();
+    let is_envelope = matches!(
+        lower.as_str(),
+        "naga3" | "cho3" | "長3" | "naga4" | "cho4" | "長4"
+    ) || lower.contains("cho-") || lower.contains("envelope");
+
+    let media = match lower.as_str() {
         "a4" => "iso_a4_210x297mm".to_string(),
         "a3" => "iso_a3_297x420mm".to_string(),
         "a5" => "iso_a5_148x210mm".to_string(),
@@ -180,7 +194,9 @@ fn map_paper_size(size: &str) -> String {
         // If already in IPP format (contains underscore), use as-is
         s if s.contains('_') => s.to_string(),
         _ => "iso_a4_210x297mm".to_string(),
-    }
+    };
+
+    (media, is_envelope)
 }
 
 /// Map color mode to IPP keyword
@@ -198,9 +214,11 @@ mod tests {
 
     #[test]
     fn test_map_paper_size() {
-        assert_eq!(map_paper_size("A4"), "iso_a4_210x297mm");
-        assert_eq!(map_paper_size("a4"), "iso_a4_210x297mm");
-        assert_eq!(map_paper_size("B5"), "iso_b5_176x250mm");
+        assert_eq!(map_paper_size("A4"), ("iso_a4_210x297mm".to_string(), false));
+        assert_eq!(map_paper_size("a4"), ("iso_a4_210x297mm".to_string(), false));
+        assert_eq!(map_paper_size("B5"), ("iso_b5_176x250mm".to_string(), false));
+        assert_eq!(map_paper_size("naga3"), ("om_cho-3_120x235mm".to_string(), true));
+        assert_eq!(map_paper_size("cho3"), ("om_cho-3_120x235mm".to_string(), true));
     }
 
     #[test]
