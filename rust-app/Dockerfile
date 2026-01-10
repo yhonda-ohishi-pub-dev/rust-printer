@@ -25,6 +25,9 @@ RUN touch src/main.rs && cargo build --release
 # Stage 2: Runtime (scratch for minimal image)
 FROM scratch
 
+# Create /tmp directory for tempfile crate
+COPY --from=builder /tmp /tmp
+
 WORKDIR /app
 
 # Copy CA certificates for HTTPS
