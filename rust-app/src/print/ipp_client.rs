@@ -62,6 +62,20 @@ impl IppPrinter {
         job_name: &str,
         mode: PrintMode,
     ) -> Result<u32> {
+        self.print_with_mode_cancellable(pdf_data, job_name, mode, || false).await
+    }
+
+    /// Print with specified mode, with cancellation check
+    pub async fn print_with_mode_cancellable<F>(
+        &self,
+        pdf_data: Vec<u8>,
+        job_name: &str,
+        mode: PrintMode,
+        is_cancelled: F,
+    ) -> Result<u32>
+    where
+        F: Fn() -> bool + Send + Sync + 'static,
+    {
         match &mode {
             PrintMode::Raw => {
                 self.print_raw(pdf_data, job_name, &self.printer_ip).await?;
@@ -73,7 +87,7 @@ impl IppPrinter {
                 color_mode,
                 document_format,
             } => {
-                self.print_ipp(
+                self.print_ipp_cancellable(
                     pdf_data,
                     job_name,
                     &self.printer_ip,
@@ -81,6 +95,7 @@ impl IppPrinter {
                     paper_size.as_deref(),
                     color_mode.as_deref(),
                     *document_format,
+                    is_cancelled,
                 )
                 .await
             }
@@ -117,8 +132,8 @@ impl IppPrinter {
         Ok(())
     }
 
-    /// Print via Direct IPP (port 631) - for PX-M650F etc.
-    async fn print_ipp(
+    /// Print via Direct IPP (port 631) - for PX-M650F etc. with cancellation support
+    async fn print_ipp_cancellable<F>(
         &self,
         pdf_data: Vec<u8>,
         job_name: &str,
@@ -127,15 +142,17 @@ impl IppPrinter {
         paper_size: Option<&str>,
         color_mode: Option<&str>,
         document_format: Option<DocumentFormat>,
-    ) -> Result<u32> {
+        is_cancelled: F,
+    ) -> Result<u32>
+    where
+        F: Fn() -> bool + Send + Sync + 'static,
+    {
         // Default to URF (Apple Raster) for Epson inkjets - better compatibility than PWG
         // Use PDF for Canon laser printers (LBP221 etc.)
         let format = document_format.unwrap_or(DocumentFormat::Urf);
 
-        // Send all pages as a single multi-page URF document
-        // Note: print_ipp_multi_document (one job per page) doesn't work with Epson
-        // because it returns ServerErrorBusy and won't accept jobs while processing
-        self.print_ipp_with_format(
+        // Send pages one by one with cancellation check
+        self.print_ipp_with_format_cancellable(
             pdf_data,
             job_name,
             printer_ip,
@@ -143,12 +160,13 @@ impl IppPrinter {
             paper_size,
             color_mode,
             format,
+            is_cancelled,
         )
         .await
     }
 
-    /// Print via Direct IPP with specified document format
-    pub async fn print_ipp_with_format(
+    /// Print via Direct IPP with specified document format and cancellation support
+    pub async fn print_ipp_with_format_cancellable<F>(
         &self,
         pdf_data: Vec<u8>,
         job_name: &str,
@@ -157,7 +175,11 @@ impl IppPrinter {
         paper_size: Option<&str>,
         color_mode: Option<&str>,
         format: DocumentFormat,
-    ) -> Result<u32> {
+        is_cancelled: F,
+    ) -> Result<u32>
+    where
+        F: Fn() -> bool + Send + Sync + 'static,
+    {
         use ipp::prelude::*;
         use std::io::Cursor;
 
@@ -184,13 +206,14 @@ impl IppPrinter {
                 // For URF, send page by page to avoid timeout on large documents
                 tracing::info!("Converting PDF to URF (Apple Raster) format - page by page");
                 return self
-                    .print_ipp_pages(
+                    .print_ipp_pages_cancellable(
                         pdf_data,
                         job_name,
                         printer_ip,
                         ipp_path,
                         paper_size,
                         color_mode,
+                        is_cancelled,
                     )
                     .await;
             }
@@ -396,7 +419,8 @@ impl IppPrinter {
 
     /// Print URF pages one by one, waiting for each job to complete before sending the next
     /// This avoids timeout issues with large multi-page documents
-    async fn print_ipp_pages(
+    /// Supports cancellation check between pages
+    async fn print_ipp_pages_cancellable<F>(
         &self,
         pdf_data: Vec<u8>,
         job_name: &str,
@@ -404,7 +428,11 @@ impl IppPrinter {
         ipp_path: &str,
         paper_size: Option<&str>,
         color_mode: Option<&str>,
-    ) -> Result<u32> {
+        is_cancelled: F,
+    ) -> Result<u32>
+    where
+        F: Fn() -> bool + Send + Sync + 'static,
+    {
         use ipp::prelude::*;
         use std::io::Cursor;
 
@@ -438,6 +466,12 @@ impl IppPrinter {
         let mut last_job_id = 0u32;
 
         for (i, urf_data) in urf_pages.into_iter().enumerate() {
+            // Check for cancellation before sending each page
+            if is_cancelled() {
+                tracing::info!("Job cancelled, stopping at page {}/{}", i + 1, num_pages);
+                anyhow::bail!("Job cancelled by user (stopped at page {}/{})", i + 1, num_pages);
+            }
+
             let page_job_name = format!("{} (page {})", job_name, i + 1);
             tracing::info!(
                 "Sending page {}/{} ({} bytes)",

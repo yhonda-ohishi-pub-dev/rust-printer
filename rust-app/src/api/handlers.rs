@@ -385,7 +385,9 @@ pub async fn print_file_async(
 
     // Clone what we need for the spawned task
     let job_store = state.job_store.clone();
+    let job_store_for_cancel = state.job_store.clone();
     let job_id_clone = job_id.clone();
+    let job_id_for_cancel = job_id.clone();
 
     // Spawn background task for printing
     tokio::spawn(async move {
@@ -393,14 +395,26 @@ pub async fn print_file_async(
 
         let printer = crate::print::IppPrinter::new(&printer_ip_str, 0);
 
-        match printer.print_with_mode(pdf_data, &filename, mode).await {
+        // Create cancellation check closure
+        let is_cancelled = move || {
+            // Use blocking check - we're in an async context but the closure is sync
+            futures::executor::block_on(job_store_for_cancel.is_cancelled(&job_id_for_cancel))
+        };
+
+        match printer.print_with_mode_cancellable(pdf_data, &filename, mode, is_cancelled).await {
             Ok(_) => {
                 tracing::info!("Async print job {} completed successfully", job_id_clone);
                 job_store.set_completed(&job_id_clone, "PDF printed successfully").await;
             }
             Err(e) => {
-                tracing::error!("Async print job {} failed: {}", job_id_clone, e);
-                job_store.set_failed(&job_id_clone, &format!("Print failed: {}", e)).await;
+                let error_msg = format!("{}", e);
+                if error_msg.contains("cancelled") {
+                    tracing::info!("Async print job {} was cancelled", job_id_clone);
+                    // Job already marked as cancelled by cancel_job endpoint
+                } else {
+                    tracing::error!("Async print job {} failed: {}", job_id_clone, e);
+                    job_store.set_failed(&job_id_clone, &format!("Print failed: {}", e)).await;
+                }
             }
         }
     });

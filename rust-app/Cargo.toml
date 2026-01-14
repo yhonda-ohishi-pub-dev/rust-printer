@@ -40,5 +40,8 @@ tempfile = "3.10"
 # UUID for job IDs
 uuid = { version = "1.0", features = ["v4"] }
 
+# Async utilities
+futures = "0.3"
+
 [dev-dependencies]
 tokio-test = "0.4"
