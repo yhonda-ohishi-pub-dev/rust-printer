@@ -23,6 +23,9 @@ pub struct PrintJob {
     pub message: Option<String>,
     pub filename: Option<String>,
     pub printer: Option<String>,
+    pub printer_ip: Option<String>,
+    pub printer_name: Option<String>,
+    pub print_mode: Option<String>,
     pub file_size: Option<usize>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -36,6 +39,9 @@ impl PrintJob {
             message: None,
             filename: None,
             printer: None,
+            printer_ip: None,
+            printer_name: None,
+            print_mode: None,
             file_size: None,
             created_at: chrono::Utc::now(),
             completed_at: None,
@@ -120,17 +126,42 @@ impl JobStore {
     }
 
     /// Update job metadata
-    pub async fn update_metadata(&self, id: &str, filename: Option<String>, printer: Option<String>, file_size: Option<usize>) {
+    pub async fn update_metadata(
+        &self,
+        id: &str,
+        filename: Option<String>,
+        printer_ip: Option<String>,
+        printer_name: Option<String>,
+        print_mode: Option<String>,
+        file_size: Option<usize>,
+    ) {
         let mut jobs = self.jobs.write().await;
         if let Some(job) = jobs.get_mut(id) {
             if let Some(f) = filename {
                 job.filename = Some(f);
             }
-            if let Some(p) = printer {
-                job.printer = Some(p);
+            if let Some(ip) = &printer_ip {
+                job.printer_ip = Some(ip.clone());
+            }
+            if let Some(name) = &printer_name {
+                job.printer_name = Some(name.clone());
+            }
+            if let Some(mode) = &print_mode {
+                job.print_mode = Some(mode.clone());
             }
             if let Some(s) = file_size {
                 job.file_size = Some(s);
+            }
+            // Also update legacy printer field for compatibility
+            if printer_ip.is_some() || printer_name.is_some() {
+                let ip_part = job.printer_ip.as_deref().unwrap_or("unknown");
+                let name_part = job.printer_name.as_deref().unwrap_or("");
+                let mode_part = job.print_mode.as_deref().unwrap_or("");
+                if name_part.is_empty() {
+                    job.printer = Some(format!("{} ({})", ip_part, mode_part));
+                } else {
+                    job.printer = Some(format!("{} - {} ({})", ip_part, name_part, mode_part));
+                }
             }
         }
     }

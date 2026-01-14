@@ -181,14 +181,18 @@ impl IppPrinter {
                 (pwg_data, "image/pwg-raster")
             }
             DocumentFormat::Urf => {
-                tracing::info!("Converting PDF to URF (Apple Raster) format");
-                let media = paper_size.map(|s| map_paper_size(s).0);
-                let urf_data = tokio::task::spawn_blocking(move || {
-                    PwgConverter::convert_to_urf(&pdf_data, 300, media.as_deref())
-                })
-                .await
-                .context("URF conversion task failed")??;
-                (urf_data, "image/urf")
+                // For URF, send page by page to avoid timeout on large documents
+                tracing::info!("Converting PDF to URF (Apple Raster) format - page by page");
+                return self
+                    .print_ipp_pages(
+                        pdf_data,
+                        job_name,
+                        printer_ip,
+                        ipp_path,
+                        paper_size,
+                        color_mode,
+                    )
+                    .await;
             }
         };
 
@@ -388,6 +392,185 @@ impl IppPrinter {
 
         tracing::info!("All {} pages sent successfully", num_pages);
         Ok(last_job_id)
+    }
+
+    /// Print URF pages one by one, waiting for each job to complete before sending the next
+    /// This avoids timeout issues with large multi-page documents
+    async fn print_ipp_pages(
+        &self,
+        pdf_data: Vec<u8>,
+        job_name: &str,
+        printer_ip: &str,
+        ipp_path: &str,
+        paper_size: Option<&str>,
+        color_mode: Option<&str>,
+    ) -> Result<u32> {
+        use ipp::prelude::*;
+        use std::io::Cursor;
+
+        let uri_string = format!("ipp://{}:631{}", printer_ip, ipp_path);
+        let uri: Uri = uri_string.parse().context("Failed to parse printer URI")?;
+
+        // Convert PDF to per-page URF
+        let media = paper_size.map(|s| map_paper_size(s).0);
+        let urf_pages = tokio::task::spawn_blocking(move || {
+            PwgConverter::convert_to_urf_pages(&pdf_data, 300, media.as_deref())
+        })
+        .await
+        .context("URF conversion task failed")??;
+
+        let num_pages = urf_pages.len();
+        tracing::info!(
+            "Printing {} pages one by one to {} (waiting for each to complete)",
+            num_pages,
+            uri
+        );
+
+        let timeout_secs = std::env::var("IPP_TIMEOUT_SECS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(120u64);
+
+        let client = AsyncIppClient::builder(uri.clone())
+            .request_timeout(Duration::from_secs(timeout_secs))
+            .build();
+
+        let mut last_job_id = 0u32;
+
+        for (i, urf_data) in urf_pages.into_iter().enumerate() {
+            let page_job_name = format!("{} (page {})", job_name, i + 1);
+            tracing::info!(
+                "Sending page {}/{} ({} bytes)",
+                i + 1,
+                num_pages,
+                urf_data.len()
+            );
+
+            let payload = IppPayload::new(Cursor::new(urf_data));
+            let mut builder = IppOperationBuilder::print_job(uri.clone(), payload)
+                .attribute(IppAttribute::new(
+                    "job-name",
+                    IppValue::NameWithoutLanguage(page_job_name.clone()),
+                ))
+                .attribute(IppAttribute::new(
+                    "document-format",
+                    IppValue::MimeMediaType("image/urf".to_string()),
+                ));
+
+            if let Some(size) = paper_size {
+                let (media_keyword, is_envelope) = map_paper_size(size);
+                builder = builder.attribute(IppAttribute::new(
+                    "media",
+                    IppValue::Keyword(media_keyword),
+                ));
+                if is_envelope {
+                    builder = builder.attribute(IppAttribute::new(
+                        "media-type",
+                        IppValue::Keyword("envelope".to_string()),
+                    ));
+                }
+            }
+
+            if let Some(color) = color_mode {
+                builder = builder.attribute(IppAttribute::new(
+                    "print-color-mode",
+                    IppValue::Keyword(map_color_mode(color)),
+                ));
+            }
+
+            let operation = builder.build();
+
+            let response: IppRequestResponse = client
+                .send(operation)
+                .await
+                .with_context(|| format!("Failed to send page {}", i + 1))?;
+
+            let status = response.header().status_code();
+            if status.is_success() {
+                last_job_id = response
+                    .attributes()
+                    .groups()
+                    .iter()
+                    .find_map(|g| g.attributes().get("job-id"))
+                    .and_then(|a| a.value().as_integer())
+                    .copied()
+                    .unwrap_or(0) as u32;
+                tracing::info!("Page {}/{} accepted, job-id: {}", i + 1, num_pages, last_job_id);
+
+                // Wait for job to complete before sending next page
+                if i + 1 < num_pages {
+                    self.wait_for_job_complete(&client, &uri, last_job_id, timeout_secs).await?;
+                }
+            } else if status == StatusCode::ServerErrorBusy {
+                tracing::warn!("Page {}/{} got ServerErrorBusy - waiting and retrying", i + 1, num_pages);
+                // Wait a bit and retry
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                anyhow::bail!("Printer busy for page {} after retry", i + 1);
+            } else {
+                anyhow::bail!("Print-Job failed for page {}: {:?}", i + 1, status);
+            }
+        }
+
+        tracing::info!("All {} pages sent successfully", num_pages);
+        Ok(last_job_id)
+    }
+
+    /// Wait for a job to complete (or at least be accepted into printer queue)
+    async fn wait_for_job_complete(
+        &self,
+        client: &ipp::prelude::AsyncIppClient,
+        uri: &ipp::prelude::Uri,
+        job_id: u32,
+        timeout_secs: u64,
+    ) -> Result<()> {
+        use ipp::prelude::*;
+
+        let start = std::time::Instant::now();
+        let max_wait = Duration::from_secs(timeout_secs);
+
+        loop {
+            if start.elapsed() > max_wait {
+                tracing::warn!("Timeout waiting for job {} - proceeding anyway", job_id);
+                return Ok(());
+            }
+
+            // Get job attributes
+            let operation = IppOperationBuilder::get_job_attributes(uri.clone(), job_id as i32)
+                .build();
+
+            match client.send(operation).await {
+                Ok(response) => {
+                    if let Some(state) = response
+                        .attributes()
+                        .groups()
+                        .iter()
+                        .find_map(|g: &IppAttributeGroup| g.attributes().get("job-state"))
+                        .and_then(|a: &IppAttribute| a.value().as_enum())
+                    {
+                        // Job states: 3=pending, 4=pending-held, 5=processing, 6=processing-stopped,
+                        // 7=canceled, 8=aborted, 9=completed
+                        let state = *state;
+                        tracing::debug!("Job {} state: {}", job_id, state);
+
+                        if state >= 7 {
+                            // Job finished (canceled, aborted, or completed)
+                            tracing::info!("Job {} finished with state {}", job_id, state);
+                            return Ok(());
+                        } else if state == 3 || state == 4 {
+                            // Job is queued, safe to send next
+                            tracing::info!("Job {} queued (state {}), sending next page", job_id, state);
+                            return Ok(());
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to get job {} status: {:?}", job_id, e);
+                }
+            }
+
+            // Wait before polling again
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
     }
 }
 

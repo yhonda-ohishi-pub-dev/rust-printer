@@ -365,16 +365,21 @@ pub async fn print_file_async(
         .clone()
         .unwrap_or_else(|| state.printer_ip.clone());
 
-    let printer_info = match &mode {
-        crate::print::PrintMode::Raw => format!("{} (RAW)", printer_ip_str),
-        crate::print::PrintMode::DirectIpp { .. } => format!("{} (Direct IPP)", printer_ip_str),
+    let print_mode_str = match &mode {
+        crate::print::PrintMode::Raw => "RAW".to_string(),
+        crate::print::PrintMode::DirectIpp { .. } => "Direct IPP".to_string(),
     };
+
+    // Guess printer name from IP (can be extended with actual discovery)
+    let printer_name = guess_printer_name(&printer_ip_str);
 
     // Update job metadata
     state.job_store.update_metadata(
         &job_id,
         Some(filename.clone()),
-        Some(printer_info),
+        Some(printer_ip_str.clone()),
+        printer_name,
+        Some(print_mode_str),
         Some(file_size),
     ).await;
 
@@ -464,4 +469,27 @@ pub async fn cancel_job(
             }
         }
     }
+}
+
+/// Guess printer name from IP address
+/// This uses a simple mapping; can be extended with actual printer discovery (IPP Get-Printer-Attributes)
+fn guess_printer_name(ip: &str) -> Option<String> {
+    // Known printer mappings (configure via environment or config file in the future)
+    let known_printers: &[(&str, &str)] = &[
+        // Epson printers (Direct IPP, port 631)
+        ("192.168.11.100", "Epson PX-M650F"),
+        ("192.168.11.101", "Epson"),
+        // Canon printers (RAW, port 9100)
+        ("192.168.11.200", "Canon LBP221"),
+        ("192.168.11.201", "Canon"),
+    ];
+
+    for (known_ip, name) in known_printers {
+        if ip == *known_ip {
+            return Some(name.to_string());
+        }
+    }
+
+    // Try to guess from IP pattern or return None
+    None
 }
