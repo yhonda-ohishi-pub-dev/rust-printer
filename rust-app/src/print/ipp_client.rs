@@ -131,6 +131,10 @@ impl IppPrinter {
         // Default to URF (Apple Raster) for Epson inkjets - better compatibility than PWG
         // Use PDF for Canon laser printers (LBP221 etc.)
         let format = document_format.unwrap_or(DocumentFormat::Urf);
+
+        // Send all pages as a single multi-page URF document
+        // Note: print_ipp_multi_document (one job per page) doesn't work with Epson
+        // because it returns ServerErrorBusy and won't accept jobs while processing
         self.print_ipp_with_format(
             pdf_data,
             job_name,
@@ -268,9 +272,125 @@ impl IppPrinter {
             anyhow::bail!("印刷失敗: {:?}", status)
         }
     }
+
+    /// Print multi-page URF as separate Print-Job requests (one per page)
+    /// This works for printers that don't support multiple-document-jobs
+    pub async fn print_ipp_multi_document(
+        &self,
+        pdf_data: Vec<u8>,
+        job_name: &str,
+        printer_ip: &str,
+        ipp_path: &str,
+        paper_size: Option<&str>,
+        color_mode: Option<&str>,
+    ) -> Result<u32> {
+        use ipp::prelude::*;
+        use std::io::Cursor;
+
+        let uri_string = format!("ipp://{}:631{}", printer_ip, ipp_path);
+        let uri: Uri = uri_string.parse().context("Failed to parse printer URI")?;
+
+        // Convert PDF to per-page URF
+        let media = paper_size.map(|s| map_paper_size(s).0);
+        let urf_pages = tokio::task::spawn_blocking(move || {
+            PwgConverter::convert_to_urf_pages(&pdf_data, 300, media.as_deref())
+        })
+        .await
+        .context("URF conversion task failed")??;
+
+        let num_pages = urf_pages.len();
+        tracing::info!(
+            "Printing {} pages as separate jobs to {}",
+            num_pages,
+            uri
+        );
+
+        let timeout_secs = std::env::var("IPP_TIMEOUT_SECS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(120u64);
+
+        let client = AsyncIppClient::builder(uri.clone())
+            .request_timeout(Duration::from_secs(timeout_secs))
+            .build();
+
+        let mut last_job_id = 0u32;
+
+        // Send each page as a separate Print-Job
+        // Don't wait for busy - just send all jobs and let the printer queue them
+        for (i, urf_data) in urf_pages.into_iter().enumerate() {
+            let page_job_name = format!("{} (page {})", job_name, i + 1);
+            tracing::info!(
+                "Sending page {}/{} ({} bytes)",
+                i + 1,
+                num_pages,
+                urf_data.len()
+            );
+
+            let payload = IppPayload::new(Cursor::new(urf_data));
+            let mut builder = IppOperationBuilder::print_job(uri.clone(), payload)
+                .attribute(IppAttribute::new(
+                    "job-name",
+                    IppValue::NameWithoutLanguage(page_job_name.clone()),
+                ))
+                .attribute(IppAttribute::new(
+                    "document-format",
+                    IppValue::MimeMediaType("image/urf".to_string()),
+                ));
+
+            if let Some(size) = paper_size {
+                let (media_keyword, is_envelope) = map_paper_size(size);
+                builder = builder.attribute(IppAttribute::new(
+                    "media",
+                    IppValue::Keyword(media_keyword),
+                ));
+                if is_envelope {
+                    builder = builder.attribute(IppAttribute::new(
+                        "media-type",
+                        IppValue::Keyword("envelope".to_string()),
+                    ));
+                }
+            }
+
+            if let Some(color) = color_mode {
+                builder = builder.attribute(IppAttribute::new(
+                    "print-color-mode",
+                    IppValue::Keyword(map_color_mode(color)),
+                ));
+            }
+
+            let operation = builder.build();
+
+            let response: IppRequestResponse = client
+                .send(operation)
+                .await
+                .with_context(|| format!("Failed to send page {}", i + 1))?;
+
+            let status = response.header().status_code();
+            if status.is_success() {
+                last_job_id = response
+                    .attributes()
+                    .groups()
+                    .iter()
+                    .find_map(|g| g.attributes().get("job-id"))
+                    .and_then(|a| a.value().as_integer())
+                    .copied()
+                    .unwrap_or(0) as u32;
+                tracing::info!("Page {}/{} sent, job-id: {}", i + 1, num_pages, last_job_id);
+            } else if status == StatusCode::ServerErrorBusy {
+                // Printer busy but might still accept job - log and continue
+                tracing::warn!("Page {}/{} got ServerErrorBusy - printer may not queue jobs", i + 1, num_pages);
+                anyhow::bail!("Printer returned ServerErrorBusy for page {} - printer does not support job queuing while busy", i + 1);
+            } else {
+                anyhow::bail!("Print-Job failed for page {}: {:?}", i + 1, status);
+            }
+        }
+
+        tracing::info!("All {} pages sent successfully", num_pages);
+        Ok(last_job_id)
+    }
 }
 
-/// Map paper size to IPP media keyword and detect if envelope
 fn map_paper_size(size: &str) -> (String, bool) {
     let lower = size.to_lowercase();
     let is_envelope = matches!(

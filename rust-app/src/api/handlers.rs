@@ -31,7 +31,8 @@ pub async fn api_info() -> impl IntoResponse {
             "/print-pdf": "Generate and print PDF (POST)",
             "/print": "Print existing PDF file (POST multipart)",
             "/print-async": "Print existing PDF file asynchronously (POST multipart)",
-            "/job/:id": "Get job status (GET)"
+            "/jobs": "Get all jobs (GET)",
+            "/job/:id": "Get job status (GET) / Cancel job (DELETE)"
         }
     }))
 }
@@ -419,5 +420,48 @@ pub async fn get_job_status(
             StatusCode::NOT_FOUND,
             Json(ApiResponse::error(&format!("Job {} not found", job_id))),
         )),
+    }
+}
+
+/// GET /jobs - Get all jobs
+pub async fn get_all_jobs(
+    State(state): State<Arc<AppState>>,
+) -> Json<serde_json::Value> {
+    let jobs = state.job_store.get_all_jobs().await;
+    Json(serde_json::json!({
+        "jobs": jobs,
+        "total": jobs.len()
+    }))
+}
+
+/// DELETE /job/:id - Cancel a job
+pub async fn cancel_job(
+    State(state): State<Arc<AppState>>,
+    Path(job_id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiResponse>)> {
+    match state.job_store.cancel_job(&job_id).await {
+        Some(job) => {
+            tracing::info!("Job {} cancelled by user", job_id);
+            Ok(Json(serde_json::json!({
+                "status": "cancelled",
+                "job": job
+            })))
+        }
+        None => {
+            // Check if job exists but can't be cancelled
+            match state.job_store.get_job(&job_id).await {
+                Some(job) => Err((
+                    StatusCode::CONFLICT,
+                    Json(ApiResponse::error(&format!(
+                        "Job {} cannot be cancelled (status: {:?})",
+                        job_id, job.status
+                    ))),
+                )),
+                None => Err((
+                    StatusCode::NOT_FOUND,
+                    Json(ApiResponse::error(&format!("Job {} not found", job_id))),
+                )),
+            }
+        }
     }
 }

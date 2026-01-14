@@ -165,6 +165,89 @@ impl PwgConverter {
         Ok(concatenated)
     }
 
+    /// Convert PDF to URF format, returning each page separately
+    ///
+    /// This is useful for printers that have issues with large multi-page URF files.
+    /// Each page is returned as a separate Vec<u8>.
+    pub fn convert_to_urf_pages(
+        pdf_data: &[u8],
+        resolution: u32,
+        paper_size: Option<&str>,
+    ) -> Result<Vec<Vec<u8>>> {
+        let temp_dir = TempDir::new().context("Failed to create temp directory")?;
+        let pdf_path = temp_dir.path().join("input.pdf");
+        let ppm_prefix = temp_dir.path().join("page");
+
+        // Write PDF to temp file
+        std::fs::write(&pdf_path, pdf_data).context("Failed to write PDF to temp file")?;
+
+        // PDF → PPM using pdftoppm
+        let pdftoppm_output = Command::new("pdftoppm")
+            .arg("-r")
+            .arg(resolution.to_string())
+            .arg(&pdf_path)
+            .arg(&ppm_prefix)
+            .output()
+            .context("Failed to execute pdftoppm")?;
+
+        if !pdftoppm_output.status.success() {
+            let stderr = String::from_utf8_lossy(&pdftoppm_output.stderr);
+            anyhow::bail!("pdftoppm failed: {}", stderr);
+        }
+
+        // Find generated PPM files
+        let ppm_files = Self::find_ppm_files(temp_dir.path())?;
+        if ppm_files.is_empty() {
+            anyhow::bail!("No PPM files generated from PDF");
+        }
+
+        tracing::info!("PDF converted to {} PPM page(s)", ppm_files.len());
+
+        // Convert each page separately
+        let mut urf_pages = Vec::with_capacity(ppm_files.len());
+        for (i, ppm_path) in ppm_files.iter().enumerate() {
+            let output_path = temp_dir.path().join(format!("page_{}.urf", i));
+
+            let mut ppm2pwg_cmd = Command::new("ppm2pwg");
+            ppm2pwg_cmd
+                .arg("-r")
+                .arg(resolution.to_string())
+                .arg("-f")
+                .arg("urf")
+                .arg("--num-pages")
+                .arg("1");
+
+            if let Some(size) = paper_size {
+                ppm2pwg_cmd.arg("--paper-size").arg(size);
+            }
+
+            ppm2pwg_cmd.arg(ppm_path).arg(&output_path);
+
+            let ppm2pwg_output = ppm2pwg_cmd
+                .output()
+                .context("Failed to execute ppm2pwg")?;
+
+            if !ppm2pwg_output.status.success() {
+                let stderr = String::from_utf8_lossy(&ppm2pwg_output.stderr);
+                anyhow::bail!("ppm2pwg failed for page {}: {}", i + 1, stderr);
+            }
+
+            let urf_data = std::fs::read(&output_path)
+                .with_context(|| format!("Failed to read URF output for page {}", i + 1))?;
+
+            tracing::debug!("Page {} URF size: {} bytes", i + 1, urf_data.len());
+            urf_pages.push(urf_data);
+        }
+
+        tracing::info!(
+            "Converted {} pages to URF (total {} bytes)",
+            urf_pages.len(),
+            urf_pages.iter().map(|p| p.len()).sum::<usize>()
+        );
+
+        Ok(urf_pages)
+    }
+
     /// Check if conversion tools are available
     pub fn check_dependencies() -> Result<()> {
         // Check pdftoppm

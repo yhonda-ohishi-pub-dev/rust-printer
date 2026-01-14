@@ -1,5 +1,5 @@
 use axum::{
-    routing::{get, post},
+    routing::{delete, get, post},
     Router,
 };
 use std::sync::Arc;
@@ -22,7 +22,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/print-pdf", post(handlers::print_pdf))
         .route("/print", post(handlers::print_file))
         .route("/print-async", post(handlers::print_file_async))
-        .route("/job/{id}", get(handlers::get_job_status))
+        .route("/jobs", get(handlers::get_all_jobs))
+        .route("/job/{id}", get(handlers::get_job_status).delete(handlers::cancel_job))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(state)

@@ -12,6 +12,7 @@ pub enum JobStatus {
     Processing,
     Completed,
     Failed,
+    Cancelled,
 }
 
 /// Print job information
@@ -140,5 +141,35 @@ impl JobStore {
         let now = chrono::Utc::now();
         let one_hour_ago = now - chrono::Duration::hours(1);
         jobs.retain(|_, job| job.created_at > one_hour_ago);
+    }
+
+    /// Get all jobs
+    pub async fn get_all_jobs(&self) -> Vec<PrintJob> {
+        let jobs = self.jobs.read().await;
+        let mut job_list: Vec<PrintJob> = jobs.values().cloned().collect();
+        job_list.sort_by(|a, b| b.created_at.cmp(&a.created_at)); // newest first
+        job_list
+    }
+
+    /// Cancel a job (mark as cancelled)
+    /// Returns true if the job was found and cancelled, false if not found
+    pub async fn cancel_job(&self, id: &str) -> Option<PrintJob> {
+        let mut jobs = self.jobs.write().await;
+        if let Some(job) = jobs.get_mut(id) {
+            // Can only cancel pending or processing jobs
+            if job.status == JobStatus::Pending || job.status == JobStatus::Processing {
+                job.status = JobStatus::Cancelled;
+                job.message = Some("Job cancelled by user".to_string());
+                job.completed_at = Some(chrono::Utc::now());
+                return Some(job.clone());
+            }
+        }
+        None
+    }
+
+    /// Check if a job is cancelled
+    pub async fn is_cancelled(&self, id: &str) -> bool {
+        let jobs = self.jobs.read().await;
+        jobs.get(id).map(|j| j.status == JobStatus::Cancelled).unwrap_or(false)
     }
 }
