@@ -21,6 +21,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/generate-pdf", post(handlers::generate_pdf))
         .route("/print-pdf", post(handlers::print_pdf))
         .route("/print", post(handlers::print_file))
+        .route("/print-async", post(handlers::print_file_async))
+        .route("/job/{id}", get(handlers::get_job_status))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(state)

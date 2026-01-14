@@ -37,5 +37,8 @@ regex = "1.10"
 # Temporary files for PWG conversion
 tempfile = "3.10"
 
+# UUID for job IDs
+uuid = { version = "1.0", features = ["v4"] }
+
 [dev-dependencies]
 tokio-test = "0.4"

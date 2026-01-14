@@ -1,4 +1,5 @@
 mod api;
+mod jobs;
 mod models;
 mod pdf;
 mod print;
@@ -9,6 +10,7 @@ use anyhow::Result;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use api::create_router;
+use jobs::JobStore;
 use pdf::PdfGenerator;
 use print::IppPrinter;
 
@@ -17,6 +19,7 @@ pub struct AppState {
     pub pdf_generator: PdfGenerator,
     pub ipp_printer: IppPrinter,
     pub printer_ip: String,
+    pub job_store: JobStore,
 }
 
 #[tokio::main]
@@ -57,11 +60,15 @@ async fn main() -> Result<()> {
     // Create printer client (uses RAW TCP port 9100 by default)
     let ipp_printer = IppPrinter::new(&printer_ip, 9100);
 
+    // Create job store for async printing
+    let job_store = JobStore::new();
+
     // Create app state
     let state = Arc::new(AppState {
         pdf_generator,
         ipp_printer,
         printer_ip: printer_ip.clone(),
+        job_store,
     });
 
     // Create router

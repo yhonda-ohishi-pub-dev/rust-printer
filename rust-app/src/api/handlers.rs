@@ -1,11 +1,12 @@
 use axum::{
-    extract::{Multipart, State},
+    extract::{Multipart, Path, State},
     http::StatusCode,
     response::IntoResponse,
     Json,
 };
 use std::sync::Arc;
 
+use crate::jobs::PrintJob;
 use crate::models::{ApiResponse, Item, PrintRequest};
 use crate::AppState;
 
@@ -28,7 +29,9 @@ pub async fn api_info() -> impl IntoResponse {
             "/health": "Health check",
             "/generate-pdf": "Generate PDF from JSON (POST)",
             "/print-pdf": "Generate and print PDF (POST)",
-            "/print": "Print existing PDF file (POST multipart)"
+            "/print": "Print existing PDF file (POST multipart)",
+            "/print-async": "Print existing PDF file asynchronously (POST multipart)",
+            "/job/:id": "Get job status (GET)"
         }
     }))
 }
@@ -264,4 +267,157 @@ pub async fn print_file(
             .with_printer(printer_info)
             .with_file_size(file_size),
     ))
+}
+
+/// POST /print-async - Print existing PDF file asynchronously (multipart form)
+/// Returns immediately with job_id, print job runs in background
+pub async fn print_file_async(
+    State(state): State<Arc<AppState>>,
+    mut multipart: Multipart,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiResponse>)> {
+    let mut pdf_data: Option<Vec<u8>> = None;
+    let mut filename: Option<String> = None;
+    let mut printer_ip: Option<String> = None;
+    let mut use_direct_ipp: bool = false;
+    let mut paper_size: Option<String> = None;
+    let mut color_mode: Option<String> = None;
+    let mut document_format: Option<String> = None;
+
+    // Parse multipart form
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let field_name = field.name().unwrap_or("").to_string();
+
+        match field_name.as_str() {
+            "document" => {
+                filename = field.file_name().map(|s| s.to_string());
+                if let Ok(bytes) = field.bytes().await {
+                    pdf_data = Some(bytes.to_vec());
+                }
+            }
+            "printerIp" | "printer_ip" => {
+                if let Ok(value) = field.text().await {
+                    if !value.is_empty() {
+                        printer_ip = Some(value);
+                    }
+                }
+            }
+            "useDirectIpp" | "use_direct_ipp" => {
+                if let Ok(value) = field.text().await {
+                    use_direct_ipp = value.parse().unwrap_or(false);
+                }
+            }
+            "paperSize" | "paper_size" => {
+                if let Ok(value) = field.text().await {
+                    if !value.is_empty() {
+                        paper_size = Some(value);
+                    }
+                }
+            }
+            "colorMode" | "color_mode" => {
+                if let Ok(value) = field.text().await {
+                    if !value.is_empty() {
+                        color_mode = Some(value);
+                    }
+                }
+            }
+            "documentFormat" | "document_format" => {
+                if let Ok(value) = field.text().await {
+                    if !value.is_empty() {
+                        document_format = Some(value);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let pdf_data = pdf_data.ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiResponse::error("No document field in form")),
+        )
+    })?;
+
+    let file_size = pdf_data.len();
+    let filename = filename.unwrap_or_else(|| "document.pdf".to_string());
+
+    // Create a job
+    let job = state.job_store.create_job().await;
+    let job_id = job.id.clone();
+
+    // Determine print mode
+    let mode = if use_direct_ipp {
+        let doc_format = document_format
+            .as_deref()
+            .and_then(crate::print::DocumentFormat::from_str);
+        crate::print::PrintMode::DirectIpp {
+            ipp_path: "/ipp/print".to_string(),
+            paper_size,
+            color_mode,
+            document_format: doc_format,
+        }
+    } else {
+        crate::print::PrintMode::Raw
+    };
+
+    let printer_ip_str = printer_ip
+        .clone()
+        .unwrap_or_else(|| state.printer_ip.clone());
+
+    let printer_info = match &mode {
+        crate::print::PrintMode::Raw => format!("{} (RAW)", printer_ip_str),
+        crate::print::PrintMode::DirectIpp { .. } => format!("{} (Direct IPP)", printer_ip_str),
+    };
+
+    // Update job metadata
+    state.job_store.update_metadata(
+        &job_id,
+        Some(filename.clone()),
+        Some(printer_info),
+        Some(file_size),
+    ).await;
+
+    // Clone what we need for the spawned task
+    let job_store = state.job_store.clone();
+    let job_id_clone = job_id.clone();
+
+    // Spawn background task for printing
+    tokio::spawn(async move {
+        job_store.set_processing(&job_id_clone).await;
+
+        let printer = crate::print::IppPrinter::new(&printer_ip_str, 0);
+
+        match printer.print_with_mode(pdf_data, &filename, mode).await {
+            Ok(_) => {
+                tracing::info!("Async print job {} completed successfully", job_id_clone);
+                job_store.set_completed(&job_id_clone, "PDF printed successfully").await;
+            }
+            Err(e) => {
+                tracing::error!("Async print job {} failed: {}", job_id_clone, e);
+                job_store.set_failed(&job_id_clone, &format!("Print failed: {}", e)).await;
+            }
+        }
+    });
+
+    tracing::info!("Async print job {} created, processing in background", job_id);
+
+    Ok(Json(serde_json::json!({
+        "status": "accepted",
+        "job_id": job_id,
+        "message": "Print job accepted, processing in background"
+    })))
+}
+
+/// GET /job/:id - Get job status
+pub async fn get_job_status(
+    State(state): State<Arc<AppState>>,
+    Path(job_id): Path<String>,
+) -> Result<Json<PrintJob>, (StatusCode, Json<ApiResponse>)> {
+    match state.job_store.get_job(&job_id).await {
+        Some(job) => Ok(Json(job)),
+        None => Err((
+            StatusCode::NOT_FOUND,
+            Json(ApiResponse::error(&format!("Job {} not found", job_id))),
+        )),
+    }
 }
