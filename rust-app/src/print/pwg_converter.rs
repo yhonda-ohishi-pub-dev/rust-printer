@@ -83,12 +83,14 @@ impl PwgConverter {
             anyhow::bail!("No PPM files generated from PDF");
         }
 
-        tracing::info!("PDF converted to {} PPM page(s)", ppm_files.len());
+        let num_pages = ppm_files.len();
+        tracing::info!("PDF converted to {} PPM page(s)", num_pages);
 
-        // For multi-page PDFs, we need to concatenate all PPM files
-        // For now, handle single page (most common case for receipts/labels)
-        // TODO: Support multi-page raster
-        let first_ppm = &ppm_files[0];
+        // Concatenate all PPM files for multi-page support
+        let concatenated_ppm = Self::concatenate_ppm_files(&ppm_files)?;
+        let concatenated_ppm_path = temp_dir.path().join("concatenated.ppm");
+        std::fs::write(&concatenated_ppm_path, &concatenated_ppm)
+            .context("Failed to write concatenated PPM")?;
 
         // PPM → PWG/URF using ppm2pwg
         let mut ppm2pwg_cmd = Command::new("ppm2pwg");
@@ -96,13 +98,15 @@ impl PwgConverter {
             .arg("-r")
             .arg(resolution.to_string())
             .arg("-f")
-            .arg(output_ext);
+            .arg(output_ext)
+            .arg("--num-pages")
+            .arg(num_pages.to_string());
 
         if let Some(size) = paper_size {
             ppm2pwg_cmd.arg("--paper-size").arg(size);
         }
 
-        ppm2pwg_cmd.arg(first_ppm).arg(&output_path);
+        ppm2pwg_cmd.arg(&concatenated_ppm_path).arg(&output_path);
 
         let ppm2pwg_output = ppm2pwg_cmd
             .output()
@@ -141,6 +145,24 @@ impl PwgConverter {
 
         ppm_files.sort();
         Ok(ppm_files)
+    }
+
+    /// Concatenate multiple PPM files into a single stream
+    /// PPM format allows multiple images in sequence (PNM stream)
+    fn concatenate_ppm_files(ppm_files: &[std::path::PathBuf]) -> Result<Vec<u8>> {
+        let mut concatenated = Vec::new();
+        for (i, ppm_path) in ppm_files.iter().enumerate() {
+            let ppm_data = std::fs::read(ppm_path)
+                .with_context(|| format!("Failed to read PPM file: {:?}", ppm_path))?;
+            tracing::debug!("Page {} PPM size: {} bytes", i + 1, ppm_data.len());
+            concatenated.extend_from_slice(&ppm_data);
+        }
+        tracing::info!(
+            "Concatenated {} PPM files into {} bytes",
+            ppm_files.len(),
+            concatenated.len()
+        );
+        Ok(concatenated)
     }
 
     /// Check if conversion tools are available
