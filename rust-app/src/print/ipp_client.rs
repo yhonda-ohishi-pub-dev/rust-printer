@@ -231,7 +231,16 @@ impl IppPrinter {
         }
 
         let operation = builder.build();
-        let client = AsyncIppClient::new(uri);
+
+        // Configure client with extended timeout for large documents
+        let timeout_secs = std::env::var("IPP_TIMEOUT_SECS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(120u64); // Default: 2 minutes
+
+        let client = AsyncIppClient::builder(uri)
+            .request_timeout(Duration::from_secs(timeout_secs))
+            .build();
 
         let response = client
             .send(operation)
