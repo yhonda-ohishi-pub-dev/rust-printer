@@ -465,13 +465,15 @@ impl IppPrinter {
 
         let mut last_job_id = 0u32;
 
-        for (i, urf_data) in urf_pages.into_iter().enumerate() {
+        // Use index-based iteration to allow retry with same data
+        for i in 0..num_pages {
             // Check for cancellation before sending each page
             if is_cancelled() {
                 tracing::info!("Job cancelled, stopping at page {}/{}", i + 1, num_pages);
                 anyhow::bail!("Job cancelled by user (stopped at page {}/{})", i + 1, num_pages);
             }
 
+            let urf_data = &urf_pages[i];
             let page_job_name = format!("{} (page {})", job_name, i + 1);
             tracing::info!(
                 "Sending page {}/{} ({} bytes)",
@@ -480,68 +482,91 @@ impl IppPrinter {
                 urf_data.len()
             );
 
-            let payload = IppPayload::new(Cursor::new(urf_data));
-            let mut builder = IppOperationBuilder::print_job(uri.clone(), payload)
-                .attribute(IppAttribute::new(
-                    "job-name",
-                    IppValue::NameWithoutLanguage(page_job_name.clone()),
-                ))
-                .attribute(IppAttribute::new(
-                    "document-format",
-                    IppValue::MimeMediaType("image/urf".to_string()),
-                ));
+            // Try to send page with retry on ServerErrorBusy
+            let max_retries = 10;
+            let mut attempt = 0;
+            let mut page_job_id = 0u32;
 
-            if let Some(size) = paper_size {
-                let (media_keyword, is_envelope) = map_paper_size(size);
-                builder = builder.attribute(IppAttribute::new(
-                    "media",
-                    IppValue::Keyword(media_keyword),
-                ));
-                if is_envelope {
+            loop {
+                attempt += 1;
+
+                let payload = IppPayload::new(Cursor::new(urf_data.clone()));
+                let mut builder = IppOperationBuilder::print_job(uri.clone(), payload)
+                    .attribute(IppAttribute::new(
+                        "job-name",
+                        IppValue::NameWithoutLanguage(page_job_name.clone()),
+                    ))
+                    .attribute(IppAttribute::new(
+                        "document-format",
+                        IppValue::MimeMediaType("image/urf".to_string()),
+                    ));
+
+                if let Some(size) = paper_size {
+                    let (media_keyword, is_envelope) = map_paper_size(size);
                     builder = builder.attribute(IppAttribute::new(
-                        "media-type",
-                        IppValue::Keyword("envelope".to_string()),
+                        "media",
+                        IppValue::Keyword(media_keyword),
+                    ));
+                    if is_envelope {
+                        builder = builder.attribute(IppAttribute::new(
+                            "media-type",
+                            IppValue::Keyword("envelope".to_string()),
+                        ));
+                    }
+                }
+
+                if let Some(color) = color_mode {
+                    builder = builder.attribute(IppAttribute::new(
+                        "print-color-mode",
+                        IppValue::Keyword(map_color_mode(color)),
                     ));
                 }
-            }
 
-            if let Some(color) = color_mode {
-                builder = builder.attribute(IppAttribute::new(
-                    "print-color-mode",
-                    IppValue::Keyword(map_color_mode(color)),
-                ));
-            }
+                let operation = builder.build();
 
-            let operation = builder.build();
+                let response: IppRequestResponse = client
+                    .send(operation)
+                    .await
+                    .with_context(|| format!("Failed to send page {}", i + 1))?;
 
-            let response: IppRequestResponse = client
-                .send(operation)
-                .await
-                .with_context(|| format!("Failed to send page {}", i + 1))?;
+                let status = response.header().status_code();
+                if status.is_success() {
+                    page_job_id = response
+                        .attributes()
+                        .groups()
+                        .iter()
+                        .find_map(|g| g.attributes().get("job-id"))
+                        .and_then(|a| a.value().as_integer())
+                        .copied()
+                        .unwrap_or(0) as u32;
+                    tracing::info!("Page {}/{} accepted, job-id: {}", i + 1, num_pages, page_job_id);
+                    break;
+                } else if status == StatusCode::ServerErrorBusy {
+                    if attempt >= max_retries {
+                        anyhow::bail!("Printer busy for page {} after {} retries", i + 1, max_retries);
+                    }
+                    let wait_secs = std::cmp::min(5 * attempt, 30) as u64;
+                    tracing::warn!(
+                        "Page {}/{} got ServerErrorBusy (attempt {}/{}) - waiting {} seconds",
+                        i + 1, num_pages, attempt, max_retries, wait_secs
+                    );
+                    tokio::time::sleep(Duration::from_secs(wait_secs)).await;
 
-            let status = response.header().status_code();
-            if status.is_success() {
-                last_job_id = response
-                    .attributes()
-                    .groups()
-                    .iter()
-                    .find_map(|g| g.attributes().get("job-id"))
-                    .and_then(|a| a.value().as_integer())
-                    .copied()
-                    .unwrap_or(0) as u32;
-                tracing::info!("Page {}/{} accepted, job-id: {}", i + 1, num_pages, last_job_id);
-
-                // Wait for job to complete before sending next page
-                if i + 1 < num_pages {
-                    self.wait_for_job_complete(&client, &uri, last_job_id, timeout_secs).await?;
+                    // Check for cancellation during retry wait
+                    if is_cancelled() {
+                        anyhow::bail!("Job cancelled by user during retry (page {})", i + 1);
+                    }
+                    // Continue to retry
+                } else {
+                    anyhow::bail!("Print-Job failed for page {}: {:?}", i + 1, status);
                 }
-            } else if status == StatusCode::ServerErrorBusy {
-                tracing::warn!("Page {}/{} got ServerErrorBusy - waiting and retrying", i + 1, num_pages);
-                // Wait a bit and retry
-                tokio::time::sleep(Duration::from_secs(5)).await;
-                anyhow::bail!("Printer busy for page {} after retry", i + 1);
-            } else {
-                anyhow::bail!("Print-Job failed for page {}: {:?}", i + 1, status);
+            }
+
+            last_job_id = page_job_id;
+
+            // Wait for job to complete before sending next page
+            if i + 1 < num_pages {
+                self.wait_for_job_complete(&client, &uri, last_job_id, timeout_secs).await?;
             }
         }
 
@@ -590,11 +615,9 @@ impl IppPrinter {
                             // Job finished (canceled, aborted, or completed)
                             tracing::info!("Job {} finished with state {}", job_id, state);
                             return Ok(());
-                        } else if state == 3 || state == 4 {
-                            // Job is queued, safe to send next
-                            tracing::info!("Job {} queued (state {}), sending next page", job_id, state);
-                            return Ok(());
                         }
+                        // For Epson printers, wait until job is fully completed
+                        // They don't support queuing multiple jobs while one is processing
                     }
                 }
                 Err(e) => {
