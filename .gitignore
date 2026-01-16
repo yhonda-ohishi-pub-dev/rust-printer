@@ -27,3 +27,5 @@ printpdf-src/
 
 # Handover notes
 handover/
+
+.claude/commands/check-remote.md

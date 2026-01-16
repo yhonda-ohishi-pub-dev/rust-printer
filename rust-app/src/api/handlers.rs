@@ -157,6 +157,7 @@ pub async fn print_file(
     State(state): State<Arc<AppState>>,
     mut multipart: Multipart,
 ) -> Result<Json<ApiResponse>, (StatusCode, Json<ApiResponse>)> {
+    tracing::info!("Received /print request (sync)");
     let mut pdf_data: Option<Vec<u8>> = None;
     let mut filename: Option<String> = None;
     let mut printer_ip: Option<String> = None;
@@ -276,6 +277,7 @@ pub async fn print_file_async(
     State(state): State<Arc<AppState>>,
     mut multipart: Multipart,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiResponse>)> {
+    tracing::info!("Received /print-async request (async)");
     let mut pdf_data: Option<Vec<u8>> = None;
     let mut filename: Option<String> = None;
     let mut printer_ip: Option<String> = None;

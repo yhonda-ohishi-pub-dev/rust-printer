@@ -593,12 +593,12 @@ impl IppPrinter {
                 return Ok(());
             }
 
-            // Get job attributes
+            // Get job attributes with individual timeout to prevent hanging
             let operation = IppOperationBuilder::get_job_attributes(uri.clone(), job_id as i32)
                 .build();
 
-            match client.send(operation).await {
-                Ok(response) => {
+            match tokio::time::timeout(Duration::from_secs(10), client.send(operation)).await {
+                Ok(Ok(response)) => {
                     if let Some(state) = response
                         .attributes()
                         .groups()
@@ -620,8 +620,11 @@ impl IppPrinter {
                         // They don't support queuing multiple jobs while one is processing
                     }
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     tracing::warn!("Failed to get job {} status: {:?}", job_id, e);
+                }
+                Err(_) => {
+                    tracing::warn!("Get-Job-Attributes timeout for job {}", job_id);
                 }
             }
 
