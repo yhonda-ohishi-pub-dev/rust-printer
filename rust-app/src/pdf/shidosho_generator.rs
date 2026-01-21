@@ -133,7 +133,7 @@ impl ShidoshoPdfGenerator {
         // 「下記の内容について、指導を受け、承知いたしました。」- 基本情報テーブルのすぐ下
         // 基本情報テーブルは2行 (row_height=5.0 x 2 = 10mm)、下端は header_y - 10 = 115
         let shita_y = header_y - 12.0 - 1.0;  // 125 - 12 - 1 = 112 (テーブル下端から1mm下)
-        ops.extend(self.text_ops(font_id, 8.0, "下記の内容について、指導を受け、承知いたしました。", 11.0, shita_y));
+        ops.extend(self.text_ops(font_id, 9.0, "下記の内容について、指導を受け、承知いたしました。", 11.0, shita_y));
 
         let mut y = shita_y - 5.0;  // 108
 
@@ -160,9 +160,11 @@ impl ShidoshoPdfGenerator {
     /// 基本情報テーブル (4列: 運行課/乗務員/運行開始/車番)
     fn build_basic_info_ops(&self, font_id: &FontId, page: &ShidoshoPage, start_y: f32) -> Result<Vec<Op>> {
         let mut ops = vec![Op::SetOutlineThickness { pt: Pt(0.2) }];
-        let col_width = 24.0_f32;
         let row_height = 5.0_f32;
         let start_x = 11.0_f32;
+
+        // 列幅を個別設定
+        let col_widths: [f32; 4] = [24.0, 24.0, 24.0, 28.0];  // 運行課, 乗務員, 運行開始, 車番
 
         let headers = ["運行課", "乗務員", "運行開始", "車番"];
         let values = [
@@ -173,17 +175,19 @@ impl ShidoshoPdfGenerator {
         ];
 
         // ヘッダー行
+        let mut x = start_x;
         for (i, header) in headers.iter().enumerate() {
-            let x = start_x + (i as f32) * col_width;
-            ops.extend(self.rect_ops(x, start_y, col_width, row_height));
-            ops.extend(self.text_centered_ops(font_id, 7.0, header, x, start_y - 3.8, col_width));
+            ops.extend(self.rect_ops(x, start_y, col_widths[i], row_height));
+            ops.extend(self.text_centered_ops(font_id, 9.0, header, x, start_y - 3.8, col_widths[i]));
+            x += col_widths[i];
         }
 
         // データ行
+        let mut x = start_x;
         for (i, value) in values.iter().enumerate() {
-            let x = start_x + (i as f32) * col_width;
-            ops.extend(self.rect_ops(x, start_y - row_height, col_width, row_height));
-            ops.extend(self.text_centered_ops(font_id, 7.0, value, x, start_y - row_height - 3.8, col_width));
+            ops.extend(self.rect_ops(x, start_y - row_height, col_widths[i], row_height));
+            ops.extend(self.text_centered_ops(font_id, 9.0, value, x, start_y - row_height - 3.8, col_widths[i]));
+            x += col_widths[i];
         }
 
         Ok(ops)
@@ -199,12 +203,12 @@ impl ShidoshoPdfGenerator {
 
         // 運行管理
         ops.extend(self.rect_ops(start_x, start_y, col_width, header_height));
-        ops.extend(self.text_centered_ops(font_id, 6.0, "運行管理", start_x, start_y - 3.0, col_width));
+        ops.extend(self.text_centered_ops(font_id, 9.0, "運行管理", start_x, start_y - 3.0, col_width));
         ops.extend(self.rect_ops(start_x, start_y - header_height, col_width, cell_height));
 
         // 配車
         ops.extend(self.rect_ops(start_x + col_width, start_y, col_width, header_height));
-        ops.extend(self.text_centered_ops(font_id, 6.0, "配車", start_x + col_width, start_y - 3.0, col_width));
+        ops.extend(self.text_centered_ops(font_id, 9.0, "配車", start_x + col_width, start_y - 3.0, col_width));
         ops.extend(self.rect_ops(start_x + col_width, start_y - header_height, col_width, cell_height));
 
         Ok(ops)
@@ -213,12 +217,12 @@ impl ShidoshoPdfGenerator {
     /// 署名欄 (基本情報テーブルの右)
     fn build_signature_ops(&self, font_id: &FontId, start_y: f32) -> Result<Vec<Op>> {
         let mut ops = vec![Op::SetOutlineThickness { pt: Pt(0.2) }];
-        let start_x = 108.0_f32;  // 基本情報4列 (11 + 24*4 = 107) の右
-        let width = 50.0_f32;
-        let height = 10.0_f32;  // 2行分
+        let start_x = 112.0_f32;  // 基本情報右端(111) + 1mm余白
+        let width = 53.0_f32;     // 押印欄(166) - 1mm余白 - 112 = 53
+        let height = 10.0_f32;    // 2行分
 
         ops.extend(self.rect_ops(start_x, start_y, width, height));
-        ops.extend(self.text_ops(font_id, 6.0, "署名", start_x + 1.0, start_y - 3.5));
+        ops.extend(self.text_ops(font_id, 9.0, "署名", start_x + 1.0, start_y - 3.5));
 
         Ok(ops)
     }
@@ -229,12 +233,12 @@ impl ShidoshoPdfGenerator {
         let start_x = 11.0_f32;
         let row_height = 4.5_f32;
         let max_rows = 18;  // A5に収まる行数
-        let loc_width = 24.0_f32;
-        let type_width = 6.0_f32;
+        let loc_width = 28.0_f32;  // 場所名の列幅
+        let type_width = 8.0_f32;  // 種別の列幅
 
         // ヘッダー
         ops.extend(self.rect_ops(start_x, start_y, loc_width + type_width, row_height));
-        ops.extend(self.text_centered_ops(font_id, 7.0, "行程", start_x, start_y - 3.5, loc_width + type_width));
+        ops.extend(self.text_centered_ops(font_id, 9.0, "行程", start_x, start_y - 3.5, loc_width + type_width));
 
         let display_count = page.itinerary.len().min(max_rows);
         for (i, item) in page.itinerary.iter().take(max_rows).enumerate() {
@@ -242,16 +246,16 @@ impl ShidoshoPdfGenerator {
             ops.extend(self.rect_ops(start_x, y, loc_width, row_height));
             // 場所名を短縮
             let location = Self::truncate_text(&item.location, 8);
-            ops.extend(self.text_ops(font_id, 6.0, &location, start_x + 0.5, y - 3.5));
+            ops.extend(self.text_ops(font_id, 9.0, &location, start_x + 0.5, y - 3.5));
             ops.extend(self.rect_ops(start_x + loc_width, y, type_width, row_height));
-            ops.extend(self.text_centered_ops(font_id, 6.0, &item.item_type, start_x + loc_width, y - 3.5, type_width));
+            ops.extend(self.text_centered_ops(font_id, 9.0, &item.item_type, start_x + loc_width, y - 3.5, type_width));
         }
 
         // 「他N件」表示
         if page.itinerary.len() > max_rows {
             let y = start_y - row_height - (display_count as f32) * row_height;
             let text = format!("他{}件", page.itinerary.len() - max_rows);
-            ops.extend(self.text_ops(font_id, 6.0, &text, start_x, y - 3.5));
+            ops.extend(self.text_ops(font_id, 9.0, &text, start_x, y - 3.5));
         }
 
         Ok(ops)
@@ -260,26 +264,26 @@ impl ShidoshoPdfGenerator {
     /// 違反内容サマリ (中央)
     fn build_violations_ops(&self, font_id: &FontId, page: &ShidoshoPage, start_y: f32) -> Result<Vec<Op>> {
         let mut ops = vec![Op::SetOutlineThickness { pt: Pt(0.2) }];
-        let start_x = 42.0_f32;  // 行程の右
-        let col_width = 30.0_f32;
+        let start_x = 48.0_f32;  // 行程の右 (11 + 28 + 8 = 47, + 1mm余白)
+        let col_width = 35.0_f32;  // 違反内容・諸元の列幅
         let row_height = 4.5_f32;
 
         // ヘッダー
         ops.extend(self.rect_ops(start_x, start_y, col_width, row_height));
-        ops.extend(self.text_centered_ops(font_id, 7.0, "違反内容", start_x, start_y - 3.5, col_width));
+        ops.extend(self.text_centered_ops(font_id, 9.0, "違反内容", start_x, start_y - 3.5, col_width));
         ops.extend(self.rect_ops(start_x + col_width, start_y, col_width, row_height));
-        ops.extend(self.text_centered_ops(font_id, 7.0, "諸元", start_x + col_width, start_y - 3.5, col_width));
+        ops.extend(self.text_centered_ops(font_id, 9.0, "諸元", start_x + col_width, start_y - 3.5, col_width));
 
         let mut current_y = start_y - row_height;
 
-        // 違反内容を表示
+        // 違反内容を表示 (PHPと同じ: str_replace("道", "", str_replace("オーバー", "超過", $f_key)))
         let violation_keys = [
-            ("高速道速度オーバー回数", "高速超過回数", "回"),
-            ("高速道速度オーバー最大値", "高速超過最大値", "km/h"),
-            ("専用道速度オーバー回数", "専用超過回数", "回"),
-            ("専用道速度オーバー最大値", "専用超過最大値", "km/h"),
-            ("一般道速度オーバー回数", "一般超過回数", "回"),
-            ("一般道速度オーバー最大値", "一般超過最大値", "km/h"),
+            ("高速道速度オーバー回数", "高速速度超過回数", "回"),
+            ("高速道速度オーバー最大値", "高速速度超過最大値", "km/h"),
+            ("専用道速度オーバー回数", "専用速度超過回数", "回"),
+            ("専用道速度オーバー最大値", "専用速度超過最大値", "km/h"),
+            ("一般道速度オーバー回数", "一般速度超過回数", "回"),
+            ("一般道速度オーバー最大値", "一般速度超過最大値", "km/h"),
             ("連続運転回数", "連続運転回数", "回"),
             ("連続運転最大値", "連続運転最大値", ""),
         ];
@@ -306,9 +310,9 @@ impl ShidoshoPdfGenerator {
         let row_height = 4.5_f32;
 
         ops.extend(self.rect_ops(start_x, y, col_width, row_height));
-        ops.extend(self.text_centered_ops(font_id, 6.0, label, start_x, y - 3.5, col_width));
+        ops.extend(self.text_centered_ops(font_id, 9.0, label, start_x, y - 3.5, col_width));
         ops.extend(self.rect_ops(start_x + col_width, y, col_width, row_height));
-        ops.extend(self.text_centered_ops(font_id, 6.0, value, start_x + col_width, y - 3.5, col_width));
+        ops.extend(self.text_centered_ops(font_id, 9.0, value, start_x + col_width, y - 3.5, col_width));
 
         ops
     }
@@ -316,7 +320,7 @@ impl ShidoshoPdfGenerator {
     /// 違反詳細リスト (違反サマリの下)
     fn build_violation_details_ops(&self, font_id: &FontId, page: &ShidoshoPage, start_y: f32) -> Result<Vec<Op>> {
         let mut ops = vec![Op::SetOutlineThickness { pt: Pt(0.2) }];
-        let start_x = 42.0_f32;  // 違反サマリと同じX位置
+        let start_x = 48.0_f32;  // 違反サマリと同じX位置
         let row_height = 4.5_f32;
         let max_rows = 12;
 
@@ -326,42 +330,55 @@ impl ShidoshoPdfGenerator {
             all_details.extend(details.iter());
         }
 
+        // 列幅定義 (9pt: 日本語=3.15mm/文字, ASCII=2.25mm/文字)
+        let type_w = 8.0_f32;      // 種別: 2文字
+        let loc_w = 29.0_f32;      // 地点: 9文字 (truncate)
+        let time_w = 18.0_f32;     // 日時: 8文字
+        let speed_w = 18.0_f32;    // 速度: 8文字
+        let interval_w = 10.0_f32; // 区間時間: 4文字 (3桁+分)
+
         for (i, detail) in all_details.iter().take(max_rows).enumerate() {
             let y = start_y - (i as f32) * row_height;
+            let mut col_x = start_x;
 
             // 種別
-            ops.extend(self.rect_ops(start_x, y, 8.0, row_height));
-            ops.extend(self.text_centered_ops(font_id, 6.0, &detail.detail_type, start_x, y - 3.5, 8.0));
+            ops.extend(self.rect_ops(col_x, y, type_w, row_height));
+            ops.extend(self.text_centered_ops(font_id, 9.0, &detail.detail_type, col_x, y - 3.5, type_w));
+            col_x += type_w;
 
             // 開始地点 (短縮)
-            let start_loc = Self::truncate_text(&detail.start_location, 8);
-            ops.extend(self.rect_ops(start_x + 8.0, y, 24.0, row_height));
-            ops.extend(self.text_ops(font_id, 6.0, &start_loc, start_x + 8.5, y - 3.5));
+            let start_loc = Self::truncate_text(&detail.start_location, 9);
+            ops.extend(self.rect_ops(col_x, y, loc_w, row_height));
+            ops.extend(self.text_ops(font_id, 9.0, &start_loc, col_x + 0.5, y - 3.5));
+            col_x += loc_w;
 
             // 終了地点 (短縮)
-            let end_loc = Self::truncate_text(&detail.end_location, 8);
-            ops.extend(self.rect_ops(start_x + 32.0, y, 24.0, row_height));
-            ops.extend(self.text_ops(font_id, 6.0, &end_loc, start_x + 32.5, y - 3.5));
+            let end_loc = Self::truncate_text(&detail.end_location, 9);
+            ops.extend(self.rect_ops(col_x, y, loc_w, row_height));
+            ops.extend(self.text_ops(font_id, 9.0, &end_loc, col_x + 0.5, y - 3.5));
+            col_x += loc_w;
 
             // 日時
-            ops.extend(self.rect_ops(start_x + 56.0, y, 16.0, row_height));
-            ops.extend(self.text_centered_ops(font_id, 6.0, &detail.start_time, start_x + 56.0, y - 3.5, 16.0));
+            ops.extend(self.rect_ops(col_x, y, time_w, row_height));
+            ops.extend(self.text_centered_ops(font_id, 9.0, &detail.start_time, col_x, y - 3.5, time_w));
+            col_x += time_w;
 
             // 速度 or 連続時間
             if detail.detail_type == "連続" {
                 if let Some(ref duration) = detail.duration {
-                    ops.extend(self.rect_ops(start_x + 72.0, y, 18.0, row_height));
-                    ops.extend(self.text_centered_ops(font_id, 6.0, duration, start_x + 72.0, y - 3.5, 18.0));
+                    ops.extend(self.rect_ops(col_x, y, speed_w + interval_w, row_height));
+                    ops.extend(self.text_right_ops(font_id, 9.0, duration, col_x, y - 3.5, speed_w + interval_w));
                 }
             } else {
                 if let Some(ref speed) = detail.speed {
-                    ops.extend(self.rect_ops(start_x + 72.0, y, 16.0, row_height));
-                    ops.extend(self.text_centered_ops(font_id, 6.0, speed, start_x + 72.0, y - 3.5, 16.0));
+                    ops.extend(self.rect_ops(col_x, y, speed_w, row_height));
+                    ops.extend(self.text_right_ops(font_id, 9.0, speed, col_x, y - 3.5, speed_w));
                 }
+                col_x += speed_w;
                 // 区間時間
                 if let Some(ref interval) = detail.interval_time {
-                    ops.extend(self.rect_ops(start_x + 88.0, y, 12.0, row_height));
-                    ops.extend(self.text_centered_ops(font_id, 6.0, interval, start_x + 88.0, y - 3.5, 12.0));
+                    ops.extend(self.rect_ops(col_x, y, interval_w, row_height));
+                    ops.extend(self.text_right_ops(font_id, 9.0, interval, col_x, y - 3.5, interval_w));
                 }
             }
         }
@@ -370,7 +387,7 @@ impl ShidoshoPdfGenerator {
         if all_details.len() > max_rows {
             let y = start_y - (max_rows as f32) * row_height;
             let text = format!("他{}件", all_details.len() - max_rows);
-            ops.extend(self.text_ops(font_id, 6.0, &text, start_x + 40.0, y - 3.5));
+            ops.extend(self.text_ops(font_id, 9.0, &text, start_x + 40.0, y - 3.5));
         }
 
         Ok(ops)
@@ -387,7 +404,7 @@ impl ShidoshoPdfGenerator {
         let height = comment_top - 10.0;  // 枠線下端(10mm)まで
 
         ops.extend(self.rect_ops(start_x, comment_top, width, height));
-        ops.extend(self.text_ops(font_id, 6.0, "指導者コメント", start_x + 1.0, comment_top - 3.5));
+        ops.extend(self.text_ops(font_id, 9.0, "指導者コメント", start_x + 1.0, comment_top - 3.5));
 
         Ok(ops)
     }
@@ -419,7 +436,7 @@ impl ShidoshoPdfGenerator {
 
         for (i, header) in headers.iter().enumerate() {
             ops.extend(self.rect_ops(x, header_y, col_widths[i], row_height));
-            ops.extend(self.text_centered_ops(font_id, 8.0, header, x, header_y - 3.5, col_widths[i]));
+            ops.extend(self.text_centered_ops(font_id, 9.0, header, x, header_y - 3.5, col_widths[i]));
             x += col_widths[i];
         }
 
@@ -439,7 +456,7 @@ impl ShidoshoPdfGenerator {
 
             for (i, value) in values.iter().enumerate() {
                 ops.extend(self.rect_ops(x, y, col_widths[i], row_height));
-                ops.extend(self.text_centered_ops(font_id, 8.0, value, x, y - 3.5, col_widths[i]));
+                ops.extend(self.text_centered_ops(font_id, 9.0, value, x, y - 3.5, col_widths[i]));
                 x += col_widths[i];
             }
         }
@@ -506,16 +523,25 @@ impl ShidoshoPdfGenerator {
     fn text_centered_ops(&self, font_id: &FontId, size: f32, text: &str, x: f32, y: f32, width: f32) -> Vec<Op> {
         let text_width = self.estimate_text_width(text, size);
         let centered_x = x + (width - text_width) / 2.0;
+        tracing::debug!("text_centered: '{}' x={} width={} text_width={} centered_x={}", text, x, width, text_width, centered_x);
         self.text_ops(font_id, size, text, centered_x, y)
     }
 
+    fn text_right_ops(&self, font_id: &FontId, size: f32, text: &str, x: f32, y: f32, width: f32) -> Vec<Op> {
+        let text_width = self.estimate_text_width(text, size);
+        let right_x = x + width - text_width - 2.5;  // 2.5mm右余白
+        tracing::debug!("text_right: '{}' x={} width={} text_width={} right_x={}", text, x, width, text_width, right_x);
+        self.text_ops(font_id, size, text, right_x, y)
+    }
+
     fn estimate_text_width(&self, text: &str, size: f32) -> f32 {
+        // printpdf: 1pt = 0.3528mm
         let mut width = 0.0_f32;
         for c in text.chars() {
             if c.is_ascii() {
-                width += size * 0.3;
+                width += size * 0.18;  // ASCII
             } else {
-                width += size * 0.5;
+                width += size * 0.32;  // 日本語
             }
         }
         width
