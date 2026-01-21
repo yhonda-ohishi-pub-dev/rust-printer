@@ -127,8 +127,8 @@ impl ShidoshoPdfGenerator {
         let header_y = 125.0_f32;
         ops.extend(self.build_basic_info_ops(font_id, page, header_y)?);
 
-        // 署名欄 (基本情報の右)
-        ops.extend(self.build_signature_ops(font_id, header_y)?);
+        // 署名欄 (基本情報の右、押印欄と同じY座標から)
+        ops.extend(self.build_signature_ops(font_id, 131.0)?);
 
         // 「下記の内容について、指導を受け、承知いたしました。」- 基本情報テーブルのすぐ下
         // 基本情報テーブルは2行 (row_height=5.0 x 2 = 10mm)、下端は header_y - 10 = 115
@@ -214,15 +214,17 @@ impl ShidoshoPdfGenerator {
         Ok(ops)
     }
 
-    /// 署名欄 (基本情報テーブルの右)
+    /// 署名欄 (基本情報テーブルの右、押印欄の標題下線〜下線に合わせる)
     fn build_signature_ops(&self, font_id: &FontId, start_y: f32) -> Result<Vec<Op>> {
         let mut ops = vec![Op::SetOutlineThickness { pt: Pt(0.2) }];
         let start_x = 112.0_f32;  // 基本情報右端(111) + 1mm余白
         let width = 53.0_f32;     // 押印欄(166) - 1mm余白 - 112 = 53
-        let height = 10.0_f32;    // 2行分
+        // 押印欄の標題下線(start_y - 4)から下線(start_y - 21)に合わせる
+        let sig_start_y = start_y - 4.0;  // 押印欄標題の下線位置
+        let height = 17.0_f32;    // 押印セルと同じ高さ
 
-        ops.extend(self.rect_ops(start_x, start_y, width, height));
-        ops.extend(self.text_ops(font_id, 9.0, "署名", start_x + 1.0, start_y - 3.5));
+        ops.extend(self.rect_filled_gray_ops(start_x, sig_start_y, width, height));
+        ops.extend(self.text_ops(font_id, 9.0, "署名", start_x + 1.0, sig_start_y - 3.5));
 
         Ok(ops)
     }
@@ -403,7 +405,7 @@ impl ShidoshoPdfGenerator {
         let width = col_width * 2.0;  // 押印欄と同じ幅
         let height = comment_top - 10.0;  // 枠線下端(10mm)まで
 
-        ops.extend(self.rect_ops(start_x, comment_top, width, height));
+        ops.extend(self.rect_filled_gray_ops(start_x, comment_top, width, height));
         ops.extend(self.text_ops(font_id, 9.0, "指導者コメント", start_x + 1.0, comment_top - 3.5));
 
         Ok(ops)
@@ -492,6 +494,29 @@ impl ShidoshoPdfGenerator {
         ops
     }
 
+    /// グレー背景の矩形 (PHP: setFillColor(240) = 240/255 ≈ 0.94)
+    fn rect_filled_gray_ops(&self, x: f32, y: f32, width: f32, height: f32) -> Vec<Op> {
+        let gray = 0.94;  // PHP: 240/255
+        let points = vec![
+            LinePoint { p: Point::new(Mm(x), Mm(y)), bezier: false },
+            LinePoint { p: Point::new(Mm(x + width), Mm(y)), bezier: false },
+            LinePoint { p: Point::new(Mm(x + width), Mm(y - height)), bezier: false },
+            LinePoint { p: Point::new(Mm(x), Mm(y - height)), bezier: false },
+        ];
+        let polygon = Polygon {
+            rings: vec![PolygonRing { points }],
+            mode: PaintMode::FillStroke,
+            winding_order: WindingOrder::NonZero,
+        };
+        vec![
+            Op::SetFillColor { col: Color::Rgb(Rgb::new(gray, gray, gray, None)) },
+            Op::SetOutlineColor { col: Color::Rgb(Rgb::new(0.0, 0.0, 0.0, None)) },
+            Op::DrawPolygon { polygon },
+            // 塗りつぶし色を黒に戻す（テキスト用）
+            Op::SetFillColor { col: Color::Rgb(Rgb::new(0.0, 0.0, 0.0, None)) },
+        ]
+    }
+
     fn line_segment_ops(&self, x1: f32, y1: f32, x2: f32, y2: f32) -> Vec<Op> {
         let points = vec![
             LinePoint { p: Point::new(Mm(x1), Mm(y1)), bezier: false },
@@ -517,6 +542,27 @@ impl ShidoshoPdfGenerator {
                 items: vec![TextItem::Text(text.to_string())],
             },
             Op::EndTextSection,
+        ]
+    }
+
+    /// グレーテキスト (PHP: setFillColor(240) = 240/255 ≈ 0.94)
+    fn text_gray_ops(&self, font_id: &FontId, size: f32, text: &str, x: f32, y: f32) -> Vec<Op> {
+        let gray = 0.75;  // 少し濃いめのグレー (0.94だと薄すぎる)
+        vec![
+            Op::StartTextSection,
+            Op::SetFillColor { col: Color::Rgb(Rgb::new(gray, gray, gray, None)) },
+            Op::SetFontSize {
+                font: font_id.clone(),
+                size: Pt(size),
+            },
+            Op::SetTextCursor { pos: Point::new(Mm(x), Mm(y)) },
+            Op::WriteText {
+                font: font_id.clone(),
+                items: vec![TextItem::Text(text.to_string())],
+            },
+            Op::EndTextSection,
+            // 黒に戻す
+            Op::SetFillColor { col: Color::Rgb(Rgb::new(0.0, 0.0, 0.0, None)) },
         ]
     }
 
