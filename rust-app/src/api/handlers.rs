@@ -516,14 +516,15 @@ pub async fn print_shidosho(
     State(state): State<Arc<AppState>>,
     Json(request): Json<ShidoshoRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ShidoshoResponse>)> {
-    if request.pages.is_empty() {
+    // pages か summary_pages のどちらかが必要
+    if request.pages.is_empty() && request.summary_pages.is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(ShidoshoResponse::error("No pages provided")),
+            Json(ShidoshoResponse::error("No pages or summary_pages provided")),
         ));
     }
 
-    let items_count = request.pages.len();
+    let items_count = request.pages.len() + request.summary_pages.len();
 
     // Generate PDF
     let pdf_data = state
@@ -561,12 +562,42 @@ pub async fn print_shidosho(
     let printer_ip = request
         .printer_ip
         .as_deref()
-        .unwrap_or(&state.printer_ip);
+        .unwrap_or(&state.printer_ip)
+        .to_string();
 
-    let printer = crate::print::IppPrinter::new(printer_ip, 0);
+    let printer_info = match &mode {
+        crate::print::PrintMode::Raw => format!("{} (RAW async)", printer_ip),
+        crate::print::PrintMode::DirectIpp { .. } => format!("{} (Direct IPP)", printer_ip),
+    };
+
+    // For RAW mode (Canon), run async and return immediately
+    if matches!(mode, crate::print::PrintMode::Raw) {
+        let printer_ip_clone = printer_ip.clone();
+        tokio::spawn(async move {
+            let printer = crate::print::IppPrinter::new(&printer_ip_clone, 0);
+            if let Err(e) = printer
+                .print_with_mode(pdf_data, "shidosho-report", crate::print::PrintMode::Raw)
+                .await
+            {
+                tracing::error!("Async shidosho print failed: {}", e);
+            } else {
+                tracing::info!("Async shidosho print completed to {}", printer_ip_clone);
+            }
+        });
+
+        return Ok(Json(
+            ShidoshoResponse::success("Shidosho PDF generated, printing in background")
+                .with_items(items_count)
+                .with_printed(true)
+                .with_printer(printer_info),
+        ).into_response());
+    }
+
+    // For Direct IPP mode (Epson), wait for completion
+    let printer = crate::print::IppPrinter::new(&printer_ip, 0);
 
     printer
-        .print_with_mode(pdf_data, "shidosho-report", mode.clone())
+        .print_with_mode(pdf_data, "shidosho-report", mode)
         .await
         .map_err(|e| {
             tracing::error!("Shidosho print failed: {}", e);
@@ -575,11 +606,6 @@ pub async fn print_shidosho(
                 Json(ShidoshoResponse::error(&format!("Print failed: {}", e))),
             )
         })?;
-
-    let printer_info = match mode {
-        crate::print::PrintMode::Raw => format!("{} (RAW)", printer_ip),
-        crate::print::PrintMode::DirectIpp { .. } => format!("{} (Direct IPP)", printer_ip),
-    };
 
     Ok(Json(
         ShidoshoResponse::success("Shidosho PDF generated and printed successfully")

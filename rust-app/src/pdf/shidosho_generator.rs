@@ -21,7 +21,7 @@ impl ShidoshoPdfGenerator {
 
     /// 指導書PDFを生成
     pub fn generate(&self, title: &str, pages: &[ShidoshoPage], summary_pages: &[SummaryPage]) -> Result<Vec<u8>> {
-        if pages.is_empty() {
+        if pages.is_empty() && summary_pages.is_empty() {
             anyhow::bail!("No pages to generate");
         }
 
@@ -420,12 +420,13 @@ impl ShidoshoPdfGenerator {
 
         let base_y = 138.0;
 
-        // 会社名と日付
-        ops.extend(self.text_ops(font_id, 9.0, &summary.firm_name, 120.0, base_y - 3.0));
-        ops.extend(self.text_ops(font_id, 9.0, &summary.date, 165.0, base_y - 3.0));
-
         // タイトル
-        ops.extend(self.text_ops(font_id, 14.0, "運行記録計による指導記録", 15.0, base_y - 12.0));
+        let title_y = base_y - 12.0;
+        ops.extend(self.text_ops(font_id, 14.0, "運行記録計による指導記録", 15.0, title_y));
+
+        // 会社名と日付 (タイトルの上に合わせる)
+        ops.extend(self.text_ops(font_id, 9.0, &summary.firm_name, 120.0, title_y));
+        ops.extend(self.text_ops(font_id, 9.0, &summary.date, 165.0, title_y));
 
         // テーブルヘッダー
         let headers = ["運行課", "氏名", "出庫日時", "帰庫日時", "コメント", "署名"];
