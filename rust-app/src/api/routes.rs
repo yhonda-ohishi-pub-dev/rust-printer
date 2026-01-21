@@ -22,6 +22,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/print-pdf", post(handlers::print_pdf))
         .route("/print", post(handlers::print_file))
         .route("/print-async", post(handlers::print_file_async))
+        .route("/print-shidosho", post(handlers::print_shidosho))
         .route("/jobs", get(handlers::get_all_jobs))
         .route("/job/{id}", get(handlers::get_job_status).delete(handlers::cancel_job))
         .layer(cors)

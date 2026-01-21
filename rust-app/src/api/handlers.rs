@@ -7,7 +7,7 @@ use axum::{
 use std::sync::Arc;
 
 use crate::jobs::PrintJob;
-use crate::models::{ApiResponse, Item, PrintRequest};
+use crate::models::{ApiResponse, Item, PrintRequest, ShidoshoRequest, ShidoshoResponse};
 use crate::AppState;
 
 /// GET /health - Health check endpoint
@@ -31,6 +31,7 @@ pub async fn api_info() -> impl IntoResponse {
             "/print-pdf": "Generate and print PDF (POST)",
             "/print": "Print existing PDF file (POST multipart)",
             "/print-async": "Print existing PDF file asynchronously (POST multipart)",
+            "/print-shidosho": "Generate and print Shidosho PDF (POST)",
             "/jobs": "Get all jobs (GET)",
             "/job/:id": "Get job status (GET) / Cancel job (DELETE)"
         }
@@ -508,4 +509,82 @@ fn guess_printer_name(ip: &str) -> Option<String> {
 
     // Try to guess from IP pattern or return None
     None
+}
+
+/// POST /print-shidosho - Generate and print Shidosho PDF
+pub async fn print_shidosho(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<ShidoshoRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ShidoshoResponse>)> {
+    if request.pages.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ShidoshoResponse::error("No pages provided")),
+        ));
+    }
+
+    let items_count = request.pages.len();
+
+    // Generate PDF
+    let pdf_data = state
+        .shidosho_generator
+        .generate(&request.title, &request.pages, &request.summary_pages)
+        .map_err(|e| {
+            tracing::error!("Shidosho PDF generation failed: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ShidoshoResponse::error(&format!("PDF generation failed: {}", e))),
+            )
+        })?;
+
+    // If print is not requested, return PDF directly
+    if !request.print {
+        return Ok((
+            StatusCode::OK,
+            [(axum::http::header::CONTENT_TYPE, "application/pdf")],
+            pdf_data,
+        ).into_response());
+    }
+
+    // Print mode
+    let mode = if request.use_direct_ipp {
+        crate::print::PrintMode::DirectIpp {
+            ipp_path: "/ipp/print".to_string(),
+            paper_size: request.paper_size.clone(),
+            color_mode: request.color_mode.clone(),
+            document_format: None,
+        }
+    } else {
+        crate::print::PrintMode::Raw
+    };
+
+    let printer_ip = request
+        .printer_ip
+        .as_deref()
+        .unwrap_or(&state.printer_ip);
+
+    let printer = crate::print::IppPrinter::new(printer_ip, 0);
+
+    printer
+        .print_with_mode(pdf_data, "shidosho-report", mode.clone())
+        .await
+        .map_err(|e| {
+            tracing::error!("Shidosho print failed: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ShidoshoResponse::error(&format!("Print failed: {}", e))),
+            )
+        })?;
+
+    let printer_info = match mode {
+        crate::print::PrintMode::Raw => format!("{} (RAW)", printer_ip),
+        crate::print::PrintMode::DirectIpp { .. } => format!("{} (Direct IPP)", printer_ip),
+    };
+
+    Ok(Json(
+        ShidoshoResponse::success("Shidosho PDF generated and printed successfully")
+            .with_items(items_count)
+            .with_printed(true)
+            .with_printer(printer_info),
+    ).into_response())
 }

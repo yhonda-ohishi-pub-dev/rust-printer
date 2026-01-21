@@ -11,12 +11,13 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use api::create_router;
 use jobs::JobStore;
-use pdf::PdfGenerator;
+use pdf::{PdfGenerator, ShidoshoPdfGenerator};
 use print::IppPrinter;
 
 /// Application state shared across handlers
 pub struct AppState {
     pub pdf_generator: PdfGenerator,
+    pub shidosho_generator: ShidoshoPdfGenerator,
     pub ipp_printer: IppPrinter,
     pub printer_ip: String,
     pub job_store: JobStore,
@@ -55,7 +56,10 @@ async fn main() -> Result<()> {
     }
 
     // Create PDF generator
-    let pdf_generator = PdfGenerator::new(font_bytes)?;
+    let pdf_generator = PdfGenerator::new(font_bytes.clone())?;
+
+    // Create Shidosho PDF generator
+    let shidosho_generator = ShidoshoPdfGenerator::new(font_bytes)?;
 
     // Create printer client (uses RAW TCP port 9100 by default)
     let ipp_printer = IppPrinter::new(&printer_ip, 9100);
@@ -66,6 +70,7 @@ async fn main() -> Result<()> {
     // Create app state
     let state = Arc::new(AppState {
         pdf_generator,
+        shidosho_generator,
         ipp_printer,
         printer_ip: printer_ip.clone(),
         job_store,

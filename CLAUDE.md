@@ -104,6 +104,9 @@ cd rust-app && cargo build
 # Rustアプリのテスト
 cd rust-app && cargo test
 
+# 指導書PDFテスト（サーバー起動→PDF生成→サーバー停止）
+./test_shidosho.sh
+
 # Docker Composeで起動（開発用）
 docker-compose up --build
 
