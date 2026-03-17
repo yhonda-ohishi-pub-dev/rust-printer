@@ -11,8 +11,15 @@ Cargo.lock
 # Environment
 .env
 
-# Fonts (large binary files) - NotoSansJP-Regular.ttf is tracked
+# Fonts (large binary files)
+# Tracked: ipaexg.ttf, ipaexm.ttf, NotoSansJP-Regular.ttf
 fonts/*.otf
+fonts/*.zip
+fonts/Cica-Bold.ttf
+fonts/NotoSansCJKjp-Bold.ttf
+fonts/NotoSansJP-Medium.ttf
+fonts/IPAexfont00401/
+fonts/cica/
 
 # Docker
 *.log
