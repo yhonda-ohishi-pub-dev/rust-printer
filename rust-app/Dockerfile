@@ -46,6 +46,9 @@ COPY --from=ppm2pwg-builder /build/ppm2pwg/ppm2pwg /usr/local/bin/ppm2pwg
 # Copy Rust binary
 COPY --from=rust-builder /app/target/release/rust-pdf-printer /app/rust-pdf-printer
 
+# Create fonts directory
+RUN mkdir -p /app/fonts
+
 # Set environment variables
 ENV RUST_LOG=info
 ENV CUPS_SERVER=cups-sidecar

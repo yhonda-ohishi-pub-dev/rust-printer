@@ -155,3 +155,13 @@ docker-compose -f docker-compose.prod.yml up -d
 
 - 本番環境は `nginx_default` ネットワークに接続
 - php3 からは `http://rust-pdf-printer:8081` でアクセス可能
+
+## 参照PHPコード
+
+指導書PDF生成の参照実装（元のPHPコード）:
+
+- `nginx_ref/html/app/src/Controller/DtakoRowsController.php` - createShidosho メソッド (行438-779)
+  - 違反判定ロジック、PDF生成処理
+  - 表示名変換: `str_replace("道", "", str_replace("オーバー", "超過", $f_key))`
+- `nginx_ref/html/app/src/Model/Entity/DtakoRow.php` - 運行情報エンティティ
+- `nginx_ref/html/app/src/Model/Entity/DtakoEvent.php` - イベント情報エンティティ
